@@ -362,25 +362,6 @@ def removeNeighbors(thing1, thing2, radius= 2./3600):
     return keep
 
 
-def make_map(binlist = None, histlist = None, histID =  None, nside = None, mag = 24.0, gridSize = 1.50):
-    # HEALPy's mapmaking scripts are useless. Here we'll make something of Quality, for the paper.
-    # gridSize is the linear side length of a map pixel, in degrees.
-
-    mapGrid = [np.interp(mag, thisBins, thisHist) for thisBins, thisHist in zip(binlist, histlist) ]
-    
-    theta, phi = hp.pix2ang(nside, histID, nest=True)
-    ra = phi*180.0/np.pi
-    dec = 90.0 - theta*180.0/np.pi
-    nGrid_ra  = np.ceil( ( np.max(ra) - np.min(ra) ) / gridSize )
-    nGrid_dec = np.ceil( ( np.max(dec) - np.min(dec) ) / gridSize )
-    raGrid  = np.linspace(np.min(ra), np.max(ra), nGrid_ra )
-    decGrid = np.linspace(np.min(dec), np.max(dec), nGrid_dec )
-    mapBins = (raGrid, decGrid)
-    theMapWeights,_, _ = np.histogram2d(ra, dec, bins= mapBins, weights = mapGrid )
-    theMapNumbers,_, _ = np.histogram2d(ra, dec, bins= mapBins )
-    theMap = theMapWeights / theMapNumbers
-    theMap[~np.isfinite(theMap)] = -99
-    return theMap
 
 def main(argv):
     # Get catalogs.
@@ -496,17 +477,6 @@ def main(argv):
     ax.axvspan(22.5,30,facecolor='red',alpha=0.1)
     fig.savefig("des_mag_reconstruction-fields-"+band)
 
-    # Loop over the histograms and divide out by the mean.
-    magNorm = 24.
-    histogramsNormed = []
-    for hist in histograms:
-        histogramsNormed.append(hist/np.interp(magNorm,truth_bins_centers_all, N_real_est_all)-1 )
-    
-    theMap = make_map(binlist = bins, histlist = histogramsNormed, histID = healInds, nside = HealConfig['out_nside'],mag=magNorm )
-
-    fig = plt.figure(1,figsize=(24,8))
-    ax = fig.add_subplot(1,1,1)
-    ax.imshow(np.clip(theMap,-2,2))
     plt.show(block=True)
     stop
 if __name__ == "__main__":
