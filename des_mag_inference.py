@@ -1,0 +1,519 @@
+#!/usr/bin/env python
+
+import desdb
+import numpy as np
+import esutil
+import pyfits
+import sys
+import healpy as hp
+import os
+import functions2
+import slr_zeropoint_shiftmap as slr
+import numpy.lib.recfunctions as rf
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator, FormatStrFormatter
+
+
+def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, real_obs_catalog, lambda_reg = .01, tag='data', doplot = False, obs_bins = None, truth_bins = None):
+    # --------------------------------------------------
+    # Settle on a binning scheme for the data.
+    # Use the Freedman-Diaconis rule, which suggests:
+    #    dx = 2 * IQR(x)/n^(1/3)
+    #    IQR is the interQuartile range, and n is the number of data points.
+    if obs_bins is None:
+        obs_binsize = 0.5#(np.percentile(sim_obs_catalog[tag],75) - np.percentile(sim_obs_catalog[tag],25))/(len(sim_obs_catalog[tag]))**(1/3.)
+        obs_nbins = int(np.ceil( (np.max( sim_obs_catalog[tag]) - np.min( sim_obs_catalog[tag] ) ) / obs_binsize) + 1) 
+        obs_bins = np.concatenate( (np.array([np.min( sim_obs_catalog[tag] )])-0.001*obs_binsize,np.array([np.min( sim_obs_catalog[tag] )]) + obs_binsize*np.arange(obs_nbins)) )
+    else:
+        obs_nbins = obs_bins.size-1
+        obs_binsize = obs_bins[1]-obs_bins[0]
+    # --------------------------------------------------
+    # Next, create the data histogram arrays.
+    N_sim_obs, _   = np.histogram(sim_obs_catalog[tag], bins = obs_bins)
+    N_real_obs, _  = np.histogram(real_obs_catalog[tag], bins = obs_bins)
+    #--------------------------------------------------
+    # Important: we can only reconstruct the input histogram in bins from which objects are actually detected.
+    if truth_bins is None:
+        truth_binsize = .50# (np.percentile(sim_truth_matched_catalog[tag],75) - np.percentile(sim_truth_matched_catalog[tag],25))/(len(sim_truth_matched_catalog[tag]))**(1/3.)
+        truth_nbins = int(np.ceil( (np.max(sim_truth_matched_catalog[tag]) - np.min(sim_truth_matched_catalog[tag] ) ) / truth_binsize) + 1) 
+        truth_bins = np.concatenate( (np.array([np.min( sim_truth_matched_catalog[tag] )])-0.001*truth_binsize,
+                                    np.array([np.min( sim_truth_matched_catalog[tag] )]) + truth_binsize*np.arange(truth_nbins)) )
+    else:
+        truth_nbins = truth_bins.size-1
+        truth_binsize = truth_bins[1]-truth_bins[0]
+    N_sim_truth, _ = np.histogram(sim_truth_catalog[tag], bins = truth_bins)
+    N_sim_truth_sorted, _  = np.histogram(sim_truth_matched_catalog[tag], bins=truth_bins)
+    # Now the entries in sorted_sim_truth should correspond
+    # element-by-element to the entries in sim_obs_catalog, so we can
+    # construct the arrays necessary to build the sum over the index
+    # function.
+    obs_bin_index = np.digitize(sim_obs_catalog[tag],obs_bins)-1
+    truth_bin_index = np.digitize(sim_truth_matched_catalog[tag],truth_bins)-1
+    indicator = np.zeros( (truth_nbins, obs_nbins) )
+    A = np.zeros( (obs_nbins, truth_nbins) )
+
+    # Finally, compute the response matrix.
+    for i in xrange(obs_bin_index.size):
+        if N_sim_truth_sorted[truth_bin_index[i]] > 0:
+            A[obs_bin_index[i],truth_bin_index[i]] = A[obs_bin_index[i],truth_bin_index[i]]+1./N_sim_truth_sorted[truth_bin_index[i]]
+
+    lambda_reg = .001
+    lambda_reg_cov = 1e-12
+    
+    Cinv_data = np.diag(1./(N_real_obs+ lambda_reg_cov))
+    #lambda_best =  setRegularizationParameter(A, Cinv_data, N_real_obs)
+    Ainv_reg = np.dot( np.linalg.inv(np.dot( np.dot( np.transpose(A), Cinv_data ), A) + lambda_reg * np.identity( N_sim_truth.size ) ), np.dot( np.transpose( A ), Cinv_data) )
+    
+
+    # Everything.
+    window = np.dot( Ainv_reg, N_sim_obs) / ( N_sim_truth + lambda_reg_cov)
+    detFrac = N_sim_truth_sorted* 1.0 / (N_sim_truth + lambda_reg_cov)
+    N_real_truth_nocorr = np.dot( Ainv_reg, N_real_obs)
+    N_real_truth = N_real_truth_nocorr / window
+    N_real_truth[~np.isfinite(N_real_truth)] = 0.
+    
+    Covar_orig = np.diag(N_real_truth + lambda_reg_cov)
+    Amod = np.dot( Ainv_reg, A )
+    Covar= np.dot( np.dot(np.transpose( Amod ), Covar_orig), Amod )
+
+    leakage = np.dot( (Amod - np.diag(Amod)) , N_real_truth)
+    Covar_orig = Covar_orig
+    errors = np.sqrt(np.diag(Covar) + leakage**2)
+    truth_bins_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
+    obs_bins_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
+    if doplot:
+        from matplotlib.colors import LogNorm
+        plt.hist2d(sim_truth_matched_catalog['mag'],sim_obs_catalog['mag'],bins = (truth_bins,obs_bins),norm=LogNorm(),normed=True)
+        plt.colorbar()
+        plt.xlabel("truth magnitude")
+        plt.ylabel("obs magnitude")
+        plt.show(block=True)
+    return N_real_truth, truth_bins_centers, truth_bins, obs_bins, errors
+
+
+
+def NoSimFields(band='i'):
+    q = """
+    SELECT
+        balrog_index,
+        mag_auto as mag,
+        flags
+    FROM
+        SUCHYTA1.balrog_sva1v2_nosim_%s
+    """ %(band)
+    return q
+
+
+
+def SimFields(band='i'):
+    q = """
+    SELECT
+        t.tilename as tilename,
+        m.balrog_index as balrog_index,
+        m.alphawin_j2000 as ra,
+        m.deltawin_j2000 as dec,
+        m.mag_auto as mag,
+        t.mag as truth_mag,
+        m.flags as flags
+    FROM
+        SUCHYTA1.balrog_sva1v2_sim_%s m
+        JOIN SUCHYTA1.balrog_sva1v2_truth_%s t ON t.balrog_index = m.balrog_index
+    """ %(band, band)
+    return q
+
+
+
+def DESFields(tilestuff, band='i'):
+    q = """
+        SELECT
+           tilename,
+           coadd_objects_id,
+           mag_auto_%s as mag,
+           alphawin_j2000_%s as ra,
+           deltawin_j2000_%s as dec,
+           flags_%s as flags
+        FROM
+           sva1_coadd_objects
+        WHERE
+           tilename in %s
+        """ % (band,band,band, band, str(tuple(np.unique(tilestuff['tilename']))))
+    return q
+
+
+def TruthFields(band='i'):
+    q = """
+    SELECT
+        balrog_index,
+        tilename,
+        ra,
+        dec,
+        mag
+    FROM
+        SUCHYTA1.balrog_sva1v2_truth_%s        
+    """%(band)
+    return q
+    
+
+def GetDESCat( depthmap, nside, tilestuff, tileinfo, band='i',depth = 50.0):
+    cur = desdb.connect()
+    q = DESFields(tileinfo, band=band)
+    detcat = cur.quick(q, array=True)
+    detcat = functions2.ValidDepth(depthmap, nside, detcat, rakey='ra', deckey='dec',depth = depth)
+    detcat = functions2.RemoveTileOverlap(tilestuff, detcat, col='tilename', rakey='ra', deckey='dec')
+    return detcat
+
+
+
+def getTileInfo(catalog, HealConfig=None):
+    if HealConfig is None:
+        HealConfig = getHealConfig()
+        
+    tiles = np.unique(catalog['tilename'])
+    cur = desdb.connect()
+    q = "SELECT tilename, udecll, udecur, urall, uraur FROM coaddtile"
+    tileinfo = cur.quick(q, array=True)
+    tilestuff = {}
+    for i in range(len(tileinfo)):
+        tilestuff[ tileinfo[i]['tilename'] ] = tileinfo[i]
+    max = np.power(map_nside/float(HealConfig['out_nside']), 2.0)
+    depthmap, nside = functions2.GetDepthMap(HealConfig['depthfile'])
+    return depthmap, nside
+    
+
+
+def cleanCatalog(catalog, tag='data'):
+    # We should get rid of obviously wrong things.
+    keep = np.where( (catalog[tag] > 15 ) & (catalog[tag] < 30) & (catalog['flags'] < 2) )
+    return catalog[keep]
+
+
+def removeBadTilesFromTruthCatalog(truth, tag='data', goodfrac = 0.8):
+    tileList = np.unique(truth['tilename'])
+    number = np.zeros(tileList.size)
+    for tile, i in zip(tileList,xrange(number.size)):
+        number[i] = np.sum(truth['tilename'] == tile)
+    tileList = tileList[number > goodfrac*np.max(number)]
+    keep = np.in1d( truth['tilename'], tileList )
+    return truth[keep]
+
+def GetFromDB( band='i', depth = 50.0):
+    depthfile = 'sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
+    slrfile = 'slr_zeropoint_shiftmap_v6_splice_cosmos_griz_EQUATORIAL_NSIDE_256_RING.fits'
+
+    cur = desdb.connect()
+    q = "SELECT tilename, udecll, udecur, urall, uraur FROM coaddtile"
+    tileinfo = cur.quick(q, array=True)
+    tilestuff = {}
+    for i in range(len(tileinfo)):
+        tilestuff[ tileinfo[i]['tilename'] ] = tileinfo[i]
+    depthmap, nside = functions2.GetDepthMap(depthfile)
+    slr_map = slr.SLRZeropointShiftmap(slrfile, band)
+   
+    q = TruthFields(band=band)
+    truth = cur.quick(q, array=True)
+    truth = removeBadTilesFromTruthCatalog(truth)
+    truth = functions2.ValidDepth(depthmap, nside, truth, depth = depth)
+    truth = functions2.RemoveTileOverlap(tilestuff, truth)
+    slr_mag, slr_quality = slr_map.addZeropoint(band, truth['ra'], truth['dec'], truth['mag'], interpolate=True)
+    truth['mag'] = slr_mag
+
+    q = SimFields(band=band)
+    sim = cur.quick(q, array=True)
+    cut = np.in1d(sim['balrog_index'],truth['balrog_index'])
+    sim = sim[cut]
+    slr_mag, slr_quality = slr_map.addZeropoint(band, sim['ra'], sim['dec'], sim['mag'], interpolate=True)
+    sim['mag'] = slr_mag
+    sim = cleanCatalog(sim,tag='mag')
+
+    des = GetDESCat(depthmap, nside, tilestuff, sim, band=band,depth = depth)
+    slr_mag, slr_quality = slr_map.addZeropoint(band, des['ra'], des['dec'], des['mag'], interpolate=True)
+    des['mag'] = slr_mag
+    des = cleanCatalog(des, tag='mag')
+
+    uind, simUniqueIndices = np.unique(sim['balrog_index'] , return_index = True)
+    sim = sim[simUniqueIndices]
+    
+    sim = np.sort(sim,order='balrog_index')
+    truth = np.sort(truth,order='balrog_index')
+    truthMatched = truth[np.in1d(truth['balrog_index'], sim['balrog_index'], assume_unique=True)]
+    sim = sim[np.in1d(sim['balrog_index'], truthMatched['balrog_index'], assume_unique = True)]
+
+    return des, sim, truthMatched, truth
+    
+
+def getCatalogs(reload=False,band='i'):
+
+    # Check to see whether the catalog files exist.  If they do, then
+    # use the files. If at least one does not, then get what we need
+    # from the database
+
+    fileNames = ['desCatalogFile-'+band+'.fits','BalrogObsFile-'+band+'.fits',
+                 'BalrogTruthFile-'+band+'.fits', 'BalrogTruthMatchedFile-'+band+'.fits']
+    exists = True
+    for thisFile in fileNames:
+        print "Checking for existence of: "+thisFile
+        if not os.path.isfile(thisFile): exists = False
+    if exists and not reload:
+        desCat = esutil.io.read(fileNames[0])
+        BalrogObs = esutil.io.read(fileNames[1])
+        BalrogTruth = esutil.io.read(fileNames[2])
+        BalrogTruthMatched = esutil.io.read(fileNames[3])
+        #BalrogNoSim = esutil.io.read(fileNames[4])
+    else:
+        print "Cannot find files, or have been asked to reload. Getting data from DESDB."
+        desCat, BalrogObs, BalrogTruthMatched, BalrogTruth = GetFromDB(band=band)
+        esutil.io.write( fileNames[0], desCat , clobber=True)
+        esutil.io.write( fileNames[1], BalrogObs , clobber=True)
+        esutil.io.write( fileNames[2], BalrogTruth , clobber=True)
+        esutil.io.write( fileNames[3], BalrogTruthMatched , clobber=True)
+    
+    return desCat, BalrogObs, BalrogTruthMatched, BalrogTruth
+
+
+def makeHistogramPlots(hist_est, bin_centers, errors, catalog_real_obs, catalog_sim_obs, catalog_sim_truth,
+                       catalog_sim_truth_matched,
+                       bin_edges = None, tag='data'):
+
+    hist_sim, _ = np.histogram(catalog_sim_truth[tag], bins = bin_edges)
+    hist_sim_obs, _  = np.histogram(catalog_sim_obs[tag], bins = bin_edges)
+    hist_obs, obs_bin_edges  = np.histogram(catalog_real_obs[tag],bins = bin_edges)
+    obs_bin_centers = (obs_bin_edges[0:-1] + obs_bin_edges[1:])/2.
+
+    peak_location = np.where(hist_obs == np.max(hist_obs) )[0]
+    if len(peak_location) > 1:
+        peak_location = peak_location[0]
+    norm_factor = np.sum(hist_obs[(peak_location-2):(peak_location+2)])*1. / np.sum(hist_sim_obs[(peak_location-2):(peak_location+2)])
+    hist_sim_renorm = hist_sim*norm_factor
+    hist_sim_obs_renorm = hist_sim_obs*norm_factor
+    print "Number of objects detected: ",catalog_real_obs.size
+    print "Number of objects recovered: ", np.sum(hist_est)
+    fig = plt.figure(1, figsize=(14,7))
+    ax = fig.add_subplot(1,2,1)
+    ax.semilogy(bin_centers, hist_est,'.', c='blue', label='inferred')
+    ax.errorbar(bin_centers, hist_est,np.clip(errors,1.,1e9), c='blue',linestyle=".")
+    ax.plot(obs_bin_centers, hist_obs, c='black',label='observed')
+    ax.plot(bin_centers, hist_sim_renorm,c='green', label='simulated')
+    ax.plot(bin_centers, hist_sim_obs_renorm, c = 'orange', label = 'sim. observed')
+    ax.legend(loc='best')
+    ax.set_ylim([100,1e6])
+    ax.set_xlim([15,30])
+    ax.set_ylabel('Number')
+    ax.set_xlabel('magnitude')
+    
+    ax = fig.add_subplot(1,2,2)
+    ax.axhspan(-.1,.1,facecolor='red',alpha=0.2)
+    ax.axhline(y=0.0,color='grey',linestyle='--')
+    ax.plot(bin_centers, (hist_est/(hist_sim_renorm+1e-12)-1),'.',color='blue')
+    ax.errorbar(bin_centers, (hist_est/(hist_sim_renorm+1e-12)-1), errors/(hist_sim_renorm+1e-6), linestyle=".",c='blue')
+    ax.set_xlabel('magnitude')
+    ax.set_ylabel('normalized reconstruction residuals')
+    ax.set_ylim([-1,1])
+    ax.set_xlim([15,30])
+
+    plt.show(block=True)
+    
+
+
+def HealPixifyCatalogs(catalog, HealConfig):
+    
+    HealInds = functions2.GetPix(HealConfig['out_nside'], catalog['ra'], catalog['dec'], nest=True)
+    healCat = rf.append_fields(catalog,'HealInd',HealInds,dtypes=HealInds.dtype)
+    return healCat
+
+
+
+def getHealConfig(map_nside = 4096, out_nside = 128, depthfile = 'sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'):
+    HealConfig = {}
+    HealConfig['map_nside'] = map_nside
+    HealConfig['out_nside'] = out_nside
+    HealConfig['finer_nside'] = map_nside
+    HealConfig['depthfile'] = depthfile
+    return HealConfig
+
+          
+def getEffectiveArea( catalog, areaMap, depthMap, HealConfig ,depth=0., rakey = 'ra',deckey = 'dec'):
+    # create a list of tile indices from the catalog.
+    catalogIndex = functions2.GetPix(HealConfig['out_nside'],catalog[rakey], catalog[deckey],nest=True)
+    tileIndices = np.unique(catalogIndex)
+    # Make a much finer grid.
+    finer_index = np.arange(hp.nside2npix(HealConfig['finer_nside']))
+    finer_theta, finer_phi = hp.pix2ang(HealConfig['finer_nside'], finer_index,nest=True)
+    # Reject those tileIndices that aren't allowed by the depthmap(?)
+    cut =  (areaMap > 0.0) & (depthMap > 0.0)
+    areaMap = areaMap[cut]
+    finer_pix = hp.ang2pix(HealConfig['out_nside'], finer_theta[cut], finer_phi[cut],nest=True)
+    # Count the number of finer gridpoints inside each tileIndex.
+    area = np.zeros(tileIndices.size)
+    maxGridsInside =  np.power(HealConfig['map_nside']*1./HealConfig['out_nside'], 2.0)
+    for tileIndex,i in zip(tileIndices,np.arange(tileIndices.size) ):
+        area[i] = np.mean(areaMap[finer_pix == tileIndex] ) * hp.nside2pixarea(HealConfig['out_nside'], degrees=True) / maxGridsInside
+    return area, tileIndices
+
+
+def removeNeighbors(thing1, thing2, radius= 2./3600):
+    # Returns the elements of thing 1 that are outside of the matching radius from thing 2
+    
+    depth=10
+    h = esutil.htm.HTM(depth)
+    m1, m2, d12 = h.match(thing1['ra'],thing1['dec'],thing2['ra'],thing2['dec'],radius,maxmatch=0)
+
+    keep = ~np.in1d(thing1['balrog_index'],thing1['balrog_index'][m1])
+    return keep
+
+
+def make_map(binlist = None, histlist = None, histID =  None, nside = None, mag = 24.0, gridSize = 1.50):
+    # HEALPy's mapmaking scripts are useless. Here we'll make something of Quality, for the paper.
+    # gridSize is the linear side length of a map pixel, in degrees.
+
+    mapGrid = [np.interp(mag, thisBins, thisHist) for thisBins, thisHist in zip(binlist, histlist) ]
+    
+    theta, phi = hp.pix2ang(nside, histID, nest=True)
+    ra = phi*180.0/np.pi
+    dec = 90.0 - theta*180.0/np.pi
+    nGrid_ra  = np.ceil( ( np.max(ra) - np.min(ra) ) / gridSize )
+    nGrid_dec = np.ceil( ( np.max(dec) - np.min(dec) ) / gridSize )
+    raGrid  = np.linspace(np.min(ra), np.max(ra), nGrid_ra )
+    decGrid = np.linspace(np.min(dec), np.max(dec), nGrid_dec )
+    mapBins = (raGrid, decGrid)
+    theMapWeights,_, _ = np.histogram2d(ra, dec, bins= mapBins, weights = mapGrid )
+    theMapNumbers,_, _ = np.histogram2d(ra, dec, bins= mapBins )
+    theMap = theMapWeights / theMapNumbers
+    theMap[~np.isfinite(theMap)] = -99
+    return theMap
+
+def main(argv):
+    # Get catalogs.
+    band = 'i'
+    des, sim, truthMatched, truth = getCatalogs(reload = False, band=band)
+    
+    # Find the inference for things with zero 
+    pure_inds =  removeNeighbors(sim, des) & ( truthMatched['mag']>0 )
+    truthMatched = truthMatched[pure_inds]
+    sim = sim[pure_inds]
+    
+    
+    # Infer underlying magnitude distribution for whole catalog.
+    N_real_est_all, truth_bins_centers_all, truth_bins_all, obs_bins, errors = doInference(truth, truthMatched, sim, des,
+                                                                     lambda_reg = .01, tag='mag', doplot = False)
+    N_obs_all,_ = np.histogram(des['mag'],bins=truth_bins_all)
+    N_obs_all = N_obs_all*1./truth.size
+    N_real_est_all = N_real_est_all*1./truth.size
+    #makeHistogramPlots(N_real_est, truth_bins_centers, errors,
+    #                   des, sim, truth, truthMatched, 
+    #                   bin_edges = truth_bins, tag='mag')
+
+    # --------------------------------------------------
+    # HEALPixify catalogs.
+    # First, get the depth map.
+    depthfile = 'sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
+    areafile = 'sva1_gold_1.0_nside4096-64_nest_'+band+'_fracdet.fits.gz'
+    depthMap = hp.read_map(depthfile, nest=True)
+    areaMap = hp.read_map(areafile, nest=True)
+    map_nside = hp.npix2nside(depthMap.size)
+
+    HealConfig = getHealConfig(map_nside = map_nside)
+    HealSim = HealPixifyCatalogs(sim,HealConfig)
+    HealDES = HealPixifyCatalogs(des,HealConfig)
+    HealTruthMatched = HealPixifyCatalogs(truthMatched, HealConfig)
+    HealTruth = HealPixifyCatalogs(truth, HealConfig)
+
+    # Find the effective area for each HEALPixel.
+    
+    
+    healInds = np.unique(HealSim['HealInd'])
+    EffectiveAreas, areaIndices = getEffectiveArea(des, areaMap, depthMap, HealConfig)
+    histograms = []
+    bins = []
+    errors = []
+    areas = []
+    nobjDES = np.zeros(healInds.size)
+    nobjTruth = np.zeros(healInds.size)
+    # Loop over the HEALPix indices.
+    fig = plt.figure(1,figsize=(24,8))
+    ax = fig.add_subplot(1,3,1)
+    # Make the reconstruction bins REALLY big:
+    for healIndex in healInds:
+        thisDES = HealDES[ HealDES['HealInd'] == healIndex]
+        thisSim = HealSim[ HealSim['HealInd'] == healIndex]
+        thisTruth = HealTruth[ HealTruth['HealInd'] == healIndex] 
+        thisTruthMatched = HealTruthMatched[ HealTruthMatched['HealInd'] == healIndex]
+        # Make extra sure the sim and truthMatched catalogs are the same!
+        thisSim = np.sort(thisSim,order='balrog_index')
+        thisTruth = np.sort(thisTruth,order='balrog_index')
+        truthMatched = truth[np.in1d(thisTruthMatched['balrog_index'], thisSim['balrog_index'], assume_unique=True)]
+        thisSim = thisSim[np.in1d(thisSim['balrog_index'], thisTruthMatched['balrog_index'], assume_unique = True)]
+        # Measure the magnitude distribution in each.
+        N_real_est, truth_bins_centers, truth_bins, obs_bins, meas_errors = doInference(thisTruth,
+                                                                                        thisTruthMatched,
+                                                                                        thisSim, thisDES,
+                                                                                        truth_bins = truth_bins_all,
+                                                                                        lambda_reg = .01, tag='mag')
+        nobjDES[healIndex == healInds] = float(thisDES.size)
+        nobjTruth[healIndex == healInds ] = float(thisTruth.size)
+        norm  = 1./thisTruth.size
+        N_real_est = N_real_est * norm
+        
+        
+        meas_errors = meas_errors * norm
+        histograms.append( N_real_est )
+        bins.append( truth_bins_centers )
+        errors.append( meas_errors )
+        ax.plot(thisDES['ra'],thisDES['dec'],',')
+    ax.set_xlabel("ra")
+    ax.set_ylabel("dec")
+    ax = fig.add_subplot(1,3,2)
+    for healIndex in healInds:
+        thisDES = HealDES[ HealDES['HealInd'] == healIndex]
+        thisTruth = HealTruth[ HealTruth['HealInd'] == healIndex] 
+
+        hist,obs_bins = np.histogram(thisDES['mag'],bins = truth_bins_all)
+        obs_bin_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
+        norm = 1./thisTruth.size
+        err = np.sqrt(hist)*norm
+        hist = hist * norm
+        #hist = hist * 1./EffectiveAreas[healIndex == areaIndices]
+        ax.errorbar(obs_bin_centers,np.clip(hist,1e-3,1e6),np.clip(err,0,hist*0.99999) )
+
+    ax.plot(truth_bins_centers_all, N_obs_all,color='black',linewidth=2.0,alpha=0.5)
+    ax.plot(truth_bins_centers_all, N_real_est_all,color='green',linewidth=2.0,alpha=0.5)
+    ax.set_xlabel(band+' mag (obs)')
+    ax.axvspan(22.5,30,facecolor='red',alpha=0.1)
+    ax.set_xlim([16,26])
+    ax.set_ylim([1e-3,1])
+    ax.set_yscale('log')
+
+    ax = fig.add_subplot(1,3,3)
+    for x,y,z in zip(bins,histograms,errors):
+        ax.errorbar(x,np.clip(y,1.01e-3,100),np.clip(z,0,y*0.9999),xlolims = True)
+    ax.plot(truth_bins_centers_all, N_obs_all,color='black',linewidth=2.0,alpha=0.5)
+    ax.plot(truth_bins_centers_all, N_real_est_all,color='green',linewidth=2.0,alpha=0.5)
+
+    ax.set_yscale('log')
+    ax.set_ylim([1e-3,1])
+    ax.set_xlim([16,26])
+    ax.set_xlabel(band+' mag (reconstructed)')
+    ax.axvspan(22.5,30,facecolor='red',alpha=0.1)
+    fig.savefig("des_mag_reconstruction-fields-"+band)
+
+    # Loop over the histograms and divide out by the mean.
+    magNorm = 24.
+    histogramsNormed = []
+    for hist in histograms:
+        histogramsNormed.append(hist/np.interp(magNorm,truth_bins_centers_all, N_real_est_all)-1 )
+    
+    theMap = make_map(binlist = bins, histlist = histogramsNormed, histID = healInds, nside = HealConfig['out_nside'],mag=magNorm )
+
+    fig = plt.figure(1,figsize=(24,8))
+    ax = fig.add_subplot(1,1,1)
+    ax.imshow(np.clip(theMap,-2,2))
+    plt.show(block=True)
+    stop
+if __name__ == "__main__":
+    import pdb, traceback
+    try:
+        main(sys.argv)
+    except:
+        thingtype, value, tb = sys.exc_info()
+        traceback.print_exc()
+        pdb.post_mortem(tb)
