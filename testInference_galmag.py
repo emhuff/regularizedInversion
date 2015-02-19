@@ -10,6 +10,20 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 
+def fluxToMag(mag, zeropoint = 25.):
+    return 10.**((zeropoint - mag)/2.5)
+
+def magToFlux(flux, zeropoint = 25.):
+    mag = zeropoint - 2.5*np.log10(flux)
+    return mag
+
+def addMagnitudes(mag1, mag2, zeropoint = 25.):
+    flux1 = fluxToMag(mag1, zeropoint = zeropoint)
+    flux2 = fluxToMag(mag2, zeropoint = zeropoint)
+    newFlux = flux1 + flux2
+    newMag = zeropoint - 2.5*np.log10(newFlux)
+    return newMag
+    
 
 def generateTruthCatalog(n_obj = 10000, slope = 1.0, downsample = False):
     # Draw catalog entries from some simple distribution.
@@ -18,10 +32,10 @@ def generateTruthCatalog(n_obj = 10000, slope = 1.0, downsample = False):
     if downsample is False:
         mag =  15 + 15*np.random.power(1+slope, size=n_obj)
     else:
-        mag =  15 + 15* np.random.rand(n_obj)
-    
+        #mag =  22.5 - 0.25*np.random.chisquare(5,size=n_obj)
+        mag = 30 - 15*np.random.power(3,size=n_obj)
     log_size =  (-0.287* mag + 4.98) + (0.0542* mag - 0.83 )* np.random.randn(n_obj)
-    flux = 10.**((25. - mag)/2.5)
+    flux = fluxToMag(mag)
     size = np.exp(log_size) # Fortunately, this is basically in arcsec
     surfaceBrightness = flux / size / size / np.pi
     # A typical sky brightness is 22.5 mag / arcsec^2
@@ -36,7 +50,8 @@ def generateTruthCatalog(n_obj = 10000, slope = 1.0, downsample = False):
     index = np.arange(int(n_obj))
     catalog = recarray((n_obj),dtype=[('data',mag.dtype),('error',error.dtype),('index',index.dtype),
                                       ('calibration',calibration.dtype),('size',size.dtype), ('SB',surfaceBrightness.dtype),
-                                      ('sky_flux',sky_flux.dtype),('sky_SB',sky_sb.dtype),('flux',flux.dtype)])
+                                      ('sky_flux',sky_flux.dtype),('sky_SB',sky_sb.dtype),('flux',flux.dtype),
+                                      ('blended',type(True))])
 
     catalog['data'] = mag
     catalog['flux'] = mag
@@ -46,13 +61,36 @@ def generateTruthCatalog(n_obj = 10000, slope = 1.0, downsample = False):
     catalog['size'] = size
     catalog['SB'] = surfaceBrightness
     catalog['sky_SB'] = sky_sb
+    catalog['blended'] = False
     return catalog
     
-    
-def applyTransferFunction(catalog,SN_cut = 5., mag_cut = 26., cbias = 0.0, mbias = 0.0):
+
+def blend(catalog, blend_fraction=0.1):
+    # Choose two random subsets of the galaxies.
+    # Add the flux of the first subset to that of the second, then remove the first.
+    subset1 = np.random.choice(catalog,np.round(blend_fraction*catalog.size),replace=False)
+    subset2 = np.random.choice(catalog,np.round(blend_fraction*catalog.size),replace=False)
+    for entry1, entry2 in zip(subset1, subset2):
+        newMag = addMagnitudes(entry1['data'], entry2['data'])
+        catalog[catalog['index'] == entry1['index']]['data'] = newMag
+        catalog[catalog['index'] == entry1['index']]['flux'] = magToFlux(newMag)
+        catalog[catalog['index'] == entry1['index']]['blended'] = True
+    keep = np.in1d(catalog['index'], subset2['index'], assume_unique=True, invert=True)
+    if np.sum(keep) == 0:
+        stop
+    catalog = catalog[keep]
+    return catalog
+        
+
+def applyTransferFunction(catalog,SN_cut = 5., mag_cut = 26., cbias = 0.0, mbias = 0.0, blend_fraction = 0.1):
     # This will add noise to the catalog entries, and apply cuts to remove some unobservable ones.
     # The noise is not trivial.
     obs_catalog = catalog.copy()
+
+    # Blend. This happens before anything else.
+    obs_catalog = blend(obs_catalog, blend_fraction = blend_fraction)
+
+    
     # Generate a noise vector based on the errors.
     noise = obs_catalog['error']*np.random.randn(len(obs_catalog))
     newFlux = 10.**((25. - obs_catalog['data'])/2.5) + noise
@@ -60,11 +98,9 @@ def applyTransferFunction(catalog,SN_cut = 5., mag_cut = 26., cbias = 0.0, mbias
     obs_catalog['data'] = newMag
     # Now recalculate the surface brightness.
     SB_new = obs_catalog['SB'] + noise / (obs_catalog['size'])**2 / np.pi
-    # Finally, apply a selection based on the new, noisy surface brightness.
+    
+    # Apply a selection based on the new, noisy surface brightness.
     obs_catalog = obs_catalog[(SB_new >  obs_catalog['sky_SB']) & (obs_catalog['size'] > 0.05) & (newFlux > 0)]
-    #plt.hist(catalog['data'], bins = 50,color='red')
-    #plt.hist(obs_catalog['data'],bins=50,color='blue',alpha=0.5)
-    #plt.show()
     return obs_catalog
     
 
@@ -142,14 +178,14 @@ def doInference(sim_truth_catalog, sim_obs_catalog, real_obs_catalog,lambda_reg 
 
 def main(argv):
     # Generate a simulated simulated truth catalog.
-    catalog_sim_truth = generateTruthCatalog(n_obj  = 1000000, slope = 1.500, downsample = True)
+    catalog_sim_truth = generateTruthCatalog(n_obj  = 100000, slope = 1.500, downsample = True)
 
     # Apply some complicated transfer function, get back a simulated
     # simulated observed catalog.
     catalog_sim_obs = applyTransferFunction(catalog_sim_truth)
 
     # Generate a simulated `real' truth catalog.
-    catalog_real_truth = generateTruthCatalog(n_obj = 1000000, slope = 2.10, downsample = False)
+    catalog_real_truth = generateTruthCatalog(n_obj = 100000, slope = 2.10, downsample = False)
     
     # Generate a simulated `real' observed catalog.
     catalog_real_obs = applyTransferFunction(catalog_real_truth)
@@ -204,6 +240,7 @@ def main(argv):
     ax.set_xlim([15,30])
     ax.legend(loc='best')
     plt.show(block=True)
+    stop
 
 if __name__ == "__main__":
     import pdb, traceback
