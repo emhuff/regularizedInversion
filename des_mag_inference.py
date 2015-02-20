@@ -198,8 +198,8 @@ def removeBadTilesFromTruthCatalog(truth, tag='data', goodfrac = 0.8):
     return truth[keep]
 
 def GetFromDB( band='i', depth = 50.0):
-    depthfile = 'sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
-    slrfile = 'slr_zeropoint_shiftmap_v6_splice_cosmos_griz_EQUATORIAL_NSIDE_256_RING.fits'
+    depthfile = '../sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
+    slrfile = '../slr_zeropoint_shiftmap_v6_splice_cosmos_griz_EQUATORIAL_NSIDE_256_RING.fits'
 
     cur = desdb.connect()
     q = "SELECT tilename, udecll, udecur, urall, uraur FROM coaddtile"
@@ -211,7 +211,7 @@ def GetFromDB( band='i', depth = 50.0):
     slr_map = slr.SLRZeropointShiftmap(slrfile, band)
    
     q = TruthFields(band=band,table='sva1v2')
-    truth = cur.quick(q1, array=True)
+    truth = cur.quick(q, array=True)
     truth = removeBadTilesFromTruthCatalog(truth)
     truth = functions2.ValidDepth(depthmap, nside, truth, depth = depth)
     truth = functions2.RemoveTileOverlap(tilestuff, truth)
@@ -239,7 +239,7 @@ def GetFromDB( band='i', depth = 50.0):
     truthMatched = truth[np.in1d(truth['balrog_index'], sim['balrog_index'], assume_unique=True)]
     sim = sim[np.in1d(sim['balrog_index'], truthMatched['balrog_index'], assume_unique = True)]
 
-    return des, sim, truthMatched, truth
+    return des, sim, truthMatched, truth, tileinfo
     
 
 def getCatalogs(reload=False,band='i'):
@@ -249,7 +249,8 @@ def getCatalogs(reload=False,band='i'):
     # from the database
 
     fileNames = ['desCatalogFile-'+band+'.fits','BalrogObsFile-'+band+'.fits',
-                 'BalrogTruthFile-'+band+'.fits', 'BalrogTruthMatchedFile-'+band+'.fits']
+                 'BalrogTruthFile-'+band+'.fits', 'BalrogTruthMatchedFile-'+band+'.fits',
+                 'BalrogTileInfo.fits']
     exists = True
     for thisFile in fileNames:
         print "Checking for existence of: "+thisFile
@@ -259,16 +260,17 @@ def getCatalogs(reload=False,band='i'):
         BalrogObs = esutil.io.read(fileNames[1])
         BalrogTruth = esutil.io.read(fileNames[2])
         BalrogTruthMatched = esutil.io.read(fileNames[3])
-        #BalrogNoSim = esutil.io.read(fileNames[4])
+        BalrogTileInfo = esutil.io.read(fileNames[4])
     else:
         print "Cannot find files, or have been asked to reload. Getting data from DESDB."
-        desCat, BalrogObs, BalrogTruthMatched, BalrogTruth = GetFromDB(band=band)
+        desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo = GetFromDB(band=band)
         esutil.io.write( fileNames[0], desCat , clobber=True)
         esutil.io.write( fileNames[1], BalrogObs , clobber=True)
         esutil.io.write( fileNames[2], BalrogTruth , clobber=True)
         esutil.io.write( fileNames[3], BalrogTruthMatched , clobber=True)
-    
-    return desCat, BalrogObs, BalrogTruthMatched, BalrogTruth
+        esutil.io.write( fileNames[4], BalrogTileInfo, clobber=True)
+        
+    return desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo
 
 
 def makeHistogramPlots(hist_est, bin_centers, errors, catalog_real_obs, catalog_sim_obs, catalog_sim_truth,
@@ -319,11 +321,12 @@ def HealPixifyCatalogs(catalog, HealConfig):
     
     HealInds = functions2.GetPix(HealConfig['out_nside'], catalog['ra'], catalog['dec'], nest=True)
     healCat = rf.append_fields(catalog,'HealInd',HealInds,dtypes=HealInds.dtype)
+
     return healCat
 
 
 
-def getHealConfig(map_nside = 4096, out_nside = 128, depthfile = 'sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'):
+def getHealConfig(map_nside = 4096, out_nside = 128, depthfile = '../sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'):
     HealConfig = {}
     HealConfig['map_nside'] = map_nside
     HealConfig['out_nside'] = out_nside
@@ -363,13 +366,15 @@ def removeNeighbors(thing1, thing2, radius= 2./3600):
     return keep
 
 
-def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = None,maglimits = [23.5, 24.5]):
+def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = None,maglimits = [22.5, 24.5],band='i'):
     # Get the unique tile list.
+    from matplotlib.collections import PolyCollection
     tiles = np.unique(truth['tilename'])
     reconBins = np.array([15.0, maglimits[0], maglimits[1],30])
     theMap = np.zeros(tiles.size) - 999
-    vertices = np.zeros(tile.size,4,2)
-    for tile in tiles:
+    mapErr = np.zeros(tiles.size)
+    vertices = np.zeros((len(tiles), 4, 2))
+    for i,tile in zip(xrange(len(tiles)),tiles):
         # find all galaxies in this tile.
         thisDES = des[des['tilename'] == tile]
         theseBalrog = truthMatched['tilename'] == tile
@@ -377,30 +382,68 @@ def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = Non
         thisSim = sim[theseBalrog]
         thisTruth = truth[truth['tilename'] == tile]
         # reconstruct the total number in the desired interval
-        this_N_est, _, _, _, errors = doInference(thisTruth, thisTruthMatched, thisSim, thisDES, tag='mag',doplot=False)
-        thisInfo = tileinfo[tileinfo['tilename'] == tile]
-        thisVertex = (thisInfo['urall'], thisInfo['uraur'], thisInfo['udecll'], thisInfo['udecur'])
-        ((thisInfo['urall'], thisInfo['udecll']), (xhi, ylo), (xhi, yhi), (xlo, yhi))
+        this_N_est, _, _, _, errors = doInference(thisTruth, thisTruthMatched, thisSim, thisDES,
+                                                  truth_bins = reconBins,tag='mag',doplot=False)
+        norm = np.sum( ( truth['mag'] > np.min(maglimits) ) & (truth['mag'] < np.max(maglimits) ))
+        theMap[i] = this_N_est[1] * 1. / norm
+        mapErr[i] = errors[1] * 1. / norm
+        thisInfo = tileinfo[np.core.defchararray.equal(tileinfo['tilename'], tile)]
+        ra_ll, ra_lr, ra_ur, ra_ul = thisInfo['urall'][0], thisInfo['uraur'][0], thisInfo['uraur'][0], thisInfo['urall'][0]
+        dec_ll, dec_lr, dec_ur, dec_ul = thisInfo['udecll'][0], thisInfo['udecll'][0], thisInfo['udecur'][0], thisInfo['udecur'][0]
+        vertices[i,:,0] = np.array((ra_ll,  ra_lr,  ra_ur,  ra_ul))
+        vertices[i,:,1] = np.array((dec_ll, dec_lr, dec_ur, dec_ul))
         
-    pass
+    # Normalize the map to relative fluctuations.
+    normedMap = theMap / np.median(theMap) - 1
+    good = theMap > 0.01
+    bad = ~good
+    
+    fig, ax = plt.subplots()
+    ax.set_axis_bgcolor('blue')
+    coll = PolyCollection(vertices[good,:,:], array=normedMap[good], cmap = plt.cm.gray, edgecolors='none')
+    badcoll = PolyCollection(vertices[bad,:,:],facecolors='red',edgecolors='none')
+    ax.add_collection(coll)
+    ax.autoscale_view()
+    ax.set_xlabel('ra')
+    ax.set_ylabel('dec')
+    ax.set_title('number density fluctuations, in range: ['+str(maglimits[0])+'< '+band+' <'+str(maglimits[1])+']')
+    ax.set_backgroundcolor('blue')
+    fig.colorbar(coll,ax=ax)
+    fig.savefig("normalized_number_map")
 
+    
+    errMap = (theMap - np.median(theMap) ) / mapErr 
+    fig, ax = plt.subplots()
+    ax.set_axis_bgcolor('blue')
+    coll = PolyCollection(vertices[good,:,:], array=errMap[good], cmap = plt.cm.gray, edgecolors='none')
+    badcoll = PolyCollection(vertices[bad,:,:],facecolors='red',edgecolors='none')
+    ax.add_collection(coll)
+    ax.add_collection(coll)
+    ax.autoscale_view()
+    ax.set_xlabel('ra')
+    ax.set_ylabel('dec')
+    ax.set_title('chi fluctuations, in range: ['+str(maglimits[0])+'< '+band+' <'+str(maglimits[1])+']')
+    fig.colorbar(coll,ax=ax)
+    fig.savefig("error_map")
+
+    stop
 
 
 def main(argv):
     # Get catalogs.
     band = 'i'
-    des, sim, truthMatched, truth = getCatalogs(reload = False, band=band)
+    des, sim, truthMatched, truth, tileInfo = getCatalogs(reload = False, band=band)
     
     # Find the inference for things with zero 
     pure_inds =  removeNeighbors(sim, des) & ( truthMatched['mag']>0 )
     truthMatched = truthMatched[pure_inds]
     sim = sim[pure_inds]
     
-    
+    y = makeTheMap(des=des, truth=truth, truthMatched = truthMatched, sim=sim, tileinfo = tileInfo,band=band )
     # Infer underlying magnitude distribution for whole catalog.
-    N_real_est_all, truth_bins_centers_all, truth_bins_all, obs_bins, errors = doInference(truth, truthMatched, sim, des,
-                                                                     lambda_reg = .01, tag='mag', doplot = False)
-    N_obs_all,_ = np.histogram(des['mag'],bins=truth_bins_all)
+    N_real_est, truth_bins_centers, truth_bins, obs_bins, errors = doInference(truth, truthMatched, sim, des,
+                                                                               lambda_reg = .01, tag='mag', doplot = False)
+    N_obs_all,_ = np.histogram(des['mag'],bins=truth_bins)
     N_obs_all = N_obs_all*1./truth.size
     N_real_est_all = N_real_est_all*1./truth.size
     makeHistogramPlots(N_real_est, truth_bins_centers, errors,
@@ -408,7 +451,7 @@ def main(argv):
                        bin_edges = truth_bins, tag='mag')
 
     # --------------------------------------------------
-
+    
 
 
     
