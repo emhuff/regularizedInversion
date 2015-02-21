@@ -218,8 +218,10 @@ def GetFromDB( band='i', depth = 50.0):
     slr_mag, slr_quality = slr_map.addZeropoint(band, truth['ra'], truth['dec'], truth['mag'], interpolate=True)
     truth['mag'] = slr_mag
 
-    q = SimFields(band=band)
+    q = SimFields(band=band, table='sva1v2')
     sim = cur.quick(q, array=True)
+
+    
     cut = np.in1d(sim['balrog_index'],truth['balrog_index'])
     sim = sim[cut]
     slr_mag, slr_quality = slr_map.addZeropoint(band, sim['ra'], sim['dec'], sim['mag'], interpolate=True)
@@ -399,26 +401,24 @@ def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = Non
     bad = ~good
     
     fig, ax = plt.subplots()
-    ax.set_axis_bgcolor('blue')
     coll = PolyCollection(vertices[good,:,:], array=normedMap[good], cmap = plt.cm.gray, edgecolors='none')
     badcoll = PolyCollection(vertices[bad,:,:],facecolors='red',edgecolors='none')
     ax.add_collection(coll)
+    ax.add_collection(badcoll)
     ax.autoscale_view()
     ax.set_xlabel('ra')
     ax.set_ylabel('dec')
     ax.set_title('number density fluctuations, in range: ['+str(maglimits[0])+'< '+band+' <'+str(maglimits[1])+']')
-    ax.set_backgroundcolor('blue')
     fig.colorbar(coll,ax=ax)
     fig.savefig("normalized_number_map")
 
     
     errMap = (theMap - np.median(theMap) ) / mapErr 
     fig, ax = plt.subplots()
-    ax.set_axis_bgcolor('blue')
     coll = PolyCollection(vertices[good,:,:], array=errMap[good], cmap = plt.cm.gray, edgecolors='none')
     badcoll = PolyCollection(vertices[bad,:,:],facecolors='red',edgecolors='none')
     ax.add_collection(coll)
-    ax.add_collection(coll)
+    ax.add_collection(badcoll)
     ax.autoscale_view()
     ax.set_xlabel('ra')
     ax.set_ylabel('dec')
@@ -431,14 +431,14 @@ def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = Non
 
 def main(argv):
     # Get catalogs.
-    band = 'i'
+    band = 'r'
     des, sim, truthMatched, truth, tileInfo = getCatalogs(reload = False, band=band)
     
     # Find the inference for things with zero 
-    pure_inds =  removeNeighbors(sim, des) & ( truthMatched['mag']>0 )
-    truthMatched = truthMatched[pure_inds]
-    sim = sim[pure_inds]
-    
+    #pure_inds =  removeNeighbors(sim, des) & ( truthMatched['mag']>0 )
+    #truthMatched = truthMatched[pure_inds]
+    #sim = sim[pure_inds]
+    stop
     y = makeTheMap(des=des, truth=truth, truthMatched = truthMatched, sim=sim, tileinfo = tileInfo,band=band )
     # Infer underlying magnitude distribution for whole catalog.
     N_real_est, truth_bins_centers, truth_bins, obs_bins, errors = doInference(truth, truthMatched, sim, des,
