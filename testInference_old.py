@@ -116,12 +116,13 @@ def doInference(sim_truth_catalog, sim_obs_catalog, real_obs_catalog,lambda_reg 
     # only Poisson scatter, and construct the data covariance matrix
     # using the measured Balrog likelihood.
     truth_bins_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
-    lambda_reg = 0.01
+    lambda_reg = 1e-5
     lambda_reg_cov = 0.0000000001
     Cinv_data = np.diag(1./(N_real_obs+ lambda_reg_cov))
     #Ainv_reg = np.dot( (np.dot( np.transpose(A), A) + np.diag( np.repeat(lambda_reg**2 , truth_nbins) ) ), np.transpose( A ) )
-    Ainv_reg = np.dot( (np.dot( np.dot( np.transpose(A), Cinv_data ), A) + np.diag( np.repeat(lambda_reg**2 , truth_nbins) ) ), np.dot( np.transpose( A ), Cinv_data) )
-    Ainv_reg = np.dot( (np.dot( np.dot( np.transpose(A), Cinv_data ), A) + lambda_reg**2 * np.diag(1./N_sim_truth) ), np.dot( np.transpose( A ), Cinv_data) )
+    #Ainv_reg = np.dot( (np.dot( np.dot( np.transpose(A), Cinv_data ), A) + np.diag( np.repeat(lambda_reg**2 , truth_nbins) ) ), np.dot( np.transpose( A ), Cinv_data) )
+    #Ainv_reg = np.dot( np.linalg.inv(np.dot( np.dot( np.transpose(A), Cinv_data ), A) + lambda_reg**2 * np.diag(1./N_sim_truth) ), np.dot( np.transpose( A ), Cinv_data) )
+    Ainv_reg = np.linalg.pinv(A)
     window = np.dot( Ainv_reg, N_sim_obs) / (N_sim_truth + lambda_reg_cov)
     #window = N_sim_truth_sorted*1.0/ (N_sim_truth + lambda_reg_cov)
     N_real_truth_nocorr = np.dot( Ainv_reg, N_real_obs)

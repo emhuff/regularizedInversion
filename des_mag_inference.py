@@ -28,6 +28,8 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
     else:
         obs_nbins = obs_bins.size-1
         obs_binsize = obs_bins[1]-obs_bins[0]
+    obs_bins_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
+
     # --------------------------------------------------
     # Next, create the data histogram arrays.
     N_sim_obs, _   = np.histogram(sim_obs_catalog[tag], bins = obs_bins)
@@ -42,30 +44,39 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
     else:
         truth_nbins = truth_bins.size-1
         truth_binsize = truth_bins[1]-truth_bins[0]
+    truth_bins_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
+
+    # The binning scheme is decided, so now we make histograms.
     N_sim_truth, _ = np.histogram(sim_truth_catalog[tag], bins = truth_bins)
     N_sim_truth_sorted, _  = np.histogram(sim_truth_matched_catalog[tag], bins=truth_bins)
-    # Now the entries in sorted_sim_truth should correspond
-    # element-by-element to the entries in sim_obs_catalog, so we can
-    # construct the arrays necessary to build the sum over the index
-    # function.
+
     obs_bin_index = np.digitize(sim_obs_catalog[tag],obs_bins)-1
     truth_bin_index = np.digitize(sim_truth_matched_catalog[tag],truth_bins)-1
     indicator = np.zeros( (truth_nbins, obs_nbins) )
     A = np.zeros( (obs_nbins, truth_nbins) )
-
+    Acount = np.zeros( (obs_nbins, truth_nbins) )
     # Finally, compute the response matrix.
     for i in xrange(obs_bin_index.size):
         if N_sim_truth_sorted[truth_bin_index[i]] > 0:
-            A[obs_bin_index[i],truth_bin_index[i]] = A[obs_bin_index[i],truth_bin_index[i]]+1./N_sim_truth_sorted[truth_bin_index[i]]
+            A[obs_bin_index[i],truth_bin_index[i]] = ( A[obs_bin_index[i],truth_bin_index[i]]+
+                                                       1./N_sim_truth_sorted[truth_bin_index[i]] )
+            Acount[obs_bin_index[i], truth_bin_index[i]] = Acount[obs_bin_index[i], truth_bin_index[i]] +1
 
-    lambda_reg = .001
+
+    lambda_reg = 1.
     lambda_reg_cov = 1e-12
-    
-    Cinv_data = np.diag(1./(N_real_obs+ lambda_reg_cov))
-    #lambda_best =  setRegularizationParameter(A, Cinv_data, N_real_obs)
-    Ainv_reg = np.dot( np.linalg.inv(np.dot( np.dot( np.transpose(A), Cinv_data ), A) + lambda_reg * np.identity( N_sim_truth.size ) ), np.dot( np.transpose( A ), Cinv_data) )
-    
 
+    # Try a power-law structure to the errors?
+    N_prior = N_sim_truth[1] * (truth_bins_centers / truth_bins_centers[1])**(20.)
+    N_prior_obs = np.dot(A, N_prior)
+    C_prelim = np.diag(N_prior + lambda_reg_cov)
+    Cinv_prelim = np.linalg.inv(C_prelim + np.diag(np.zeros(truth_nbins)+lambda_reg_cov))
+    C_data = np.dot( np.dot( A, C_prelim), np.transpose(A) )
+    Cinv_data = np.linalg.inv(C_data + np.diag(np.zeros(obs_nbins)+lambda_reg_cov))
+    Ainv_reg = np.dot( np.linalg.pinv(np.dot( np.dot( np.transpose(A), Cinv_data ), A) + lambda_reg *Cinv_prelim ), np.dot( np.transpose( A ), Cinv_data) )
+    #Ainv_reg = np.dot( np.linalg.pinv(np.dot( np.transpose(A), A) + lambda_reg * np.identity( N_sim_truth.size )  ), np.dot( np.transpose( A ), Cinv_data) )
+
+        
     # Everything.
     window = np.dot( Ainv_reg, N_sim_obs) / ( N_sim_truth + lambda_reg_cov)
     detFrac = N_sim_truth_sorted* 1.0 / (N_sim_truth + lambda_reg_cov)
@@ -82,6 +93,7 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
     errors = np.sqrt(np.diag(Covar) + leakage**2)
     truth_bins_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
     obs_bins_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
+
     if doplot:
         from matplotlib.colors import LogNorm
         plt.hist2d(sim_truth_matched_catalog['mag'],sim_obs_catalog['mag'],bins = (truth_bins,obs_bins),norm=LogNorm(),normed=True)
@@ -90,6 +102,7 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
         plt.ylabel("obs magnitude")
         plt.show(block=True)
     return N_real_truth, truth_bins_centers, truth_bins, obs_bins, errors
+
 
 
 
@@ -184,7 +197,7 @@ def getTileInfo(catalog, HealConfig=None):
 
 def cleanCatalog(catalog, tag='data'):
     # We should get rid of obviously wrong things.
-    keep = np.where( (catalog[tag] > 15 ) & (catalog[tag] < 30) & (catalog['flags'] < 2) )
+    keep = np.where( (catalog[tag] > 15. ) & (catalog[tag] < 30.) & (catalog['flags'] < 2) )
     return catalog[keep]
 
 
@@ -216,21 +229,19 @@ def GetFromDB( band='i', depth = 50.0):
     truth = functions2.ValidDepth(depthmap, nside, truth, depth = depth)
     truth = functions2.RemoveTileOverlap(tilestuff, truth)
     slr_mag, slr_quality = slr_map.addZeropoint(band, truth['ra'], truth['dec'], truth['mag'], interpolate=True)
-    truth['mag'] = slr_mag
+    #truth['mag'] = slr_mag
 
     q = SimFields(band=band, table='sva1v2')
-    sim = cur.quick(q, array=True)
-
-    
+    sim = cur.quick(q, array=True)    
     cut = np.in1d(sim['balrog_index'],truth['balrog_index'])
     sim = sim[cut]
-    slr_mag, slr_quality = slr_map.addZeropoint(band, sim['ra'], sim['dec'], sim['mag'], interpolate=True)
-    sim['mag'] = slr_mag
+    #slr_mag, slr_quality = slr_map.addZeropoint(band, sim['ra'], sim['dec'], sim['mag'], interpolate=True)
+    #sim['mag'] = slr_mag
     sim = cleanCatalog(sim,tag='mag')
 
     des = GetDESCat(depthmap, nside, tilestuff, sim, band=band,depth = depth)
-    slr_mag, slr_quality = slr_map.addZeropoint(band, des['ra'], des['dec'], des['mag'], interpolate=True)
-    des['mag'] = slr_mag
+    #slr_mag, slr_quality = slr_map.addZeropoint(band, des['ra'], des['dec'], des['mag'], interpolate=True)
+    #des['mag'] = slr_mag
     des = cleanCatalog(des, tag='mag')
 
     uind, simUniqueIndices = np.unique(sim['balrog_index'] , return_index = True)
@@ -300,7 +311,7 @@ def makeHistogramPlots(hist_est, bin_centers, errors, catalog_real_obs, catalog_
     ax.plot(bin_centers, hist_sim_renorm,c='green', label='simulated')
     ax.plot(bin_centers, hist_sim_obs_renorm, c = 'orange', label = 'sim. observed')
     ax.legend(loc='best')
-    ax.set_ylim([100,1e6])
+    ax.set_ylim([1000,1e7])
     ax.set_xlim([15,30])
     ax.set_ylabel('Number')
     ax.set_xlabel('magnitude')
@@ -372,7 +383,7 @@ def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = Non
     # Get the unique tile list.
     from matplotlib.collections import PolyCollection
     tiles = np.unique(truth['tilename'])
-    reconBins = np.array([15.0, maglimits[0], maglimits[1],30])
+    reconBins = np.array([15.0, maglimits[0], maglimits[1],99])
     theMap = np.zeros(tiles.size) - 999
     mapErr = np.zeros(tiles.size)
     vertices = np.zeros((len(tiles), 4, 2))
@@ -435,23 +446,23 @@ def main(argv):
     des, sim, truthMatched, truth, tileInfo = getCatalogs(reload = False, band=band)
     
     # Find the inference for things with zero 
-    #pure_inds =  removeNeighbors(sim, des) & ( truthMatched['mag']>0 )
-    #truthMatched = truthMatched[pure_inds]
-    #sim = sim[pure_inds]
-    stop
-    y = makeTheMap(des=des, truth=truth, truthMatched = truthMatched, sim=sim, tileinfo = tileInfo,band=band )
+    pure_inds =  removeNeighbors(sim, des) & ( truthMatched['mag']>0 ) & ( np.abs(truthMatched['mag'] - sim['mag']) < .5) 
+    truthMatched = truthMatched[pure_inds]
+    sim = sim[pure_inds]
+    
     # Infer underlying magnitude distribution for whole catalog.
     N_real_est, truth_bins_centers, truth_bins, obs_bins, errors = doInference(truth, truthMatched, sim, des,
-                                                                               lambda_reg = .01, tag='mag', doplot = False)
-    N_obs_all,_ = np.histogram(des['mag'],bins=truth_bins)
-    N_obs_all = N_obs_all*1./truth.size
-    N_real_est_all = N_real_est_all*1./truth.size
+                                                                               lambda_reg = .01, tag='mag', doplot = True)
+    N_obs,_ = np.histogram(des['mag'],bins=truth_bins)
+    N_obs = N_obs
+    N_real_est = N_real_est
     makeHistogramPlots(N_real_est, truth_bins_centers, errors,
                        des, sim, truth, truthMatched, 
                        bin_edges = truth_bins, tag='mag')
-
-    # --------------------------------------------------
     
+    # --------------------------------------------------
+    y = makeTheMap(des=des, truth=truth, truthMatched = truthMatched, sim=sim, tileinfo = tileInfo,band=band )
+    stop
 
 
     
