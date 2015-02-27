@@ -5,6 +5,7 @@ import numpy as np
 import esutil
 import pyfits
 import sys
+import argparse
 import healpy as hp
 import os
 import functions2
@@ -22,7 +23,7 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
     #    dx = 2 * IQR(x)/n^(1/3)
     #    IQR is the interQuartile range, and n is the number of data points.
     if obs_bins is None:
-        obs_binsize = 0.5#(np.percentile(sim_obs_catalog[tag],75) - np.percentile(sim_obs_catalog[tag],25))/(len(sim_obs_catalog[tag]))**(1/3.)
+        obs_binsize = 0.5#*(np.percentile(sim_obs_catalog[tag],75) - np.percentile(sim_obs_catalog[tag],25))/(len(sim_obs_catalog[tag]))**(1/3.)
         obs_nbins = int(np.ceil( (np.max( sim_obs_catalog[tag]) - np.min( sim_obs_catalog[tag] ) ) / obs_binsize) + 1) 
         obs_bins = np.concatenate( (np.array([np.min( sim_obs_catalog[tag] )])-0.001*obs_binsize,np.array([np.min( sim_obs_catalog[tag] )]) + obs_binsize*np.arange(obs_nbins)) )
     else:
@@ -37,7 +38,7 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
     #--------------------------------------------------
     # Important: we can only reconstruct the input histogram in bins from which objects are actually detected.
     if truth_bins is None:
-        truth_binsize = .50# (np.percentile(sim_truth_matched_catalog[tag],75) - np.percentile(sim_truth_matched_catalog[tag],25))/(len(sim_truth_matched_catalog[tag]))**(1/3.)
+        truth_binsize = 0.5#2* (np.percentile(sim_truth_matched_catalog[tag],75) - np.percentile(sim_truth_matched_catalog[tag],25))/(len(sim_truth_matched_catalog[tag]))**(1/3.)
         truth_nbins = int(np.ceil( (np.max(sim_truth_matched_catalog[tag]) - np.min(sim_truth_matched_catalog[tag] ) ) / truth_binsize) + 1) 
         truth_bins = np.concatenate( (np.array([np.min( sim_truth_matched_catalog[tag] )])-0.001*truth_binsize,
                                     np.array([np.min( sim_truth_matched_catalog[tag] )]) + truth_binsize*np.arange(truth_nbins)) )
@@ -63,7 +64,7 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
             Acount[obs_bin_index[i], truth_bin_index[i]] = Acount[obs_bin_index[i], truth_bin_index[i]] +1
 
 
-    lambda_reg = 1.
+    lambda_reg = 0.001
     lambda_reg_cov = 1e-12
 
     # Try a power-law structure to the errors?
@@ -73,8 +74,8 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
     Cinv_prelim = np.linalg.inv(C_prelim + np.diag(np.zeros(truth_nbins)+lambda_reg_cov))
     C_data = np.dot( np.dot( A, C_prelim), np.transpose(A) )
     Cinv_data = np.linalg.inv(C_data + np.diag(np.zeros(obs_nbins)+lambda_reg_cov))
-    Ainv_reg = np.dot( np.linalg.pinv(np.dot( np.dot( np.transpose(A), Cinv_data ), A) + lambda_reg *Cinv_prelim ), np.dot( np.transpose( A ), Cinv_data) )
-    #Ainv_reg = np.dot( np.linalg.pinv(np.dot( np.transpose(A), A) + lambda_reg * np.identity( N_sim_truth.size )  ), np.dot( np.transpose( A ), Cinv_data) )
+    #Ainv_reg = np.dot( np.linalg.pinv(np.dot( np.dot( np.transpose(A), Cinv_data ), A) + lambda_reg *Cinv_prelim ), np.dot( np.transpose( A ), Cinv_data) )
+    Ainv_reg = np.dot( np.linalg.pinv(np.dot( np.transpose(A), A) + lambda_reg * np.identity( N_sim_truth.size )  ), np.dot( np.transpose( A ), Cinv_data) )
 
         
     # Everything.
@@ -88,9 +89,10 @@ def doInference(sim_truth_catalog, sim_truth_matched_catalog, sim_obs_catalog, r
     Amod = np.dot( Ainv_reg, A )
     Covar= np.dot(  np.dot(Amod, Covar_orig), np.transpose(Amod) )
 
-    leakage = np.dot( (Amod - np.diag(Amod)) , N_real_truth)
+    leakage = np.dot( np.transpose(Amod - np.diag(Amod)) , N_real_truth)
     Covar_orig = Covar_orig
     errors = np.sqrt(np.diag(Covar) + leakage**2)
+    #errors = np.sqrt(np.diag(Covar))
     truth_bins_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
     obs_bins_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
 
@@ -123,6 +125,12 @@ def SimFields(band='i',table='sva1v2'):
     q = """
     SELECT
         t.tilename as tilename,
+        m.xwin_image as xwin_image,
+        m.ywin_image as ywin_image,
+        m.xmin_image as xmin_image,
+        m.ymin_image as ymin_image,
+        m.xmax_image as xmax_image,
+        m.ymax_image as ymax_image,
         m.balrog_index as balrog_index,
         m.alphawin_j2000 as ra,
         m.deltawin_j2000 as dec,
@@ -209,8 +217,18 @@ def removeBadTilesFromTruthCatalog(truth, tag='data', goodfrac = 0.8):
     tileList = tileList[number > goodfrac*np.max(number)]
     keep = np.in1d( truth['tilename'], tileList )
     return truth[keep]
+    
 
-def GetFromDB( band='i', depth = 50.0):
+def mergeCatalogsUsingPandas(sim=None, truth=None, key='balrog_index'):
+    import pandas as pd
+    simData = pd.DataFrame(sim)
+    truthData = pd.DataFrame(truth)
+    matched = pd.merge(simData, truthData, on=key, suffixes = ['_sim',''])
+    matched_arr = matched.to_records()
+    return matched_arr
+    
+
+def GetFromDB( band='i', depth = 50.0, tables = ('sva1v2','sva1v3')):
     depthfile = '../sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
     slrfile = '../slr_zeropoint_shiftmap_v6_splice_cosmos_griz_EQUATORIAL_NSIDE_256_RING.fits'
 
@@ -222,36 +240,45 @@ def GetFromDB( band='i', depth = 50.0):
         tilestuff[ tileinfo[i]['tilename'] ] = tileinfo[i]
     depthmap, nside = functions2.GetDepthMap(depthfile)
     slr_map = slr.SLRZeropointShiftmap(slrfile, band)
-   
-    q = TruthFields(band=band,table='sva1v2')
-    truth = cur.quick(q, array=True)
-    truth = removeBadTilesFromTruthCatalog(truth)
-    truth = functions2.ValidDepth(depthmap, nside, truth, depth = depth)
-    truth = functions2.RemoveTileOverlap(tilestuff, truth)
-    slr_mag, slr_quality = slr_map.addZeropoint(band, truth['ra'], truth['dec'], truth['mag'], interpolate=True)
-    #truth['mag'] = slr_mag
+    truths = []
+    sims = []
+    truthMatcheds = []
+    
+    for tableName in tables:
+        q = TruthFields(band=band,table=tableName)
+        truth = cur.quick(q, array=True)
 
-    q = SimFields(band=band, table='sva1v2')
-    sim = cur.quick(q, array=True)    
-    cut = np.in1d(sim['balrog_index'],truth['balrog_index'])
-    sim = sim[cut]
-    #slr_mag, slr_quality = slr_map.addZeropoint(band, sim['ra'], sim['dec'], sim['mag'], interpolate=True)
-    #sim['mag'] = slr_mag
-    sim = cleanCatalog(sim,tag='mag')
+        truth = removeBadTilesFromTruthCatalog(truth)
+        truth = functions2.ValidDepth(depthmap, nside, truth, depth = depth)
+        truth = functions2.RemoveTileOverlap(tilestuff, truth)
+        slr_mag, slr_quality = slr_map.addZeropoint(band, truth['ra'], truth['dec'], truth['mag'], interpolate=True)
 
+        q = SimFields(band=band, table=tableName)
+        sim = cur.quick(q, array=True)
+        sim = cleanCatalog(sim,tag='mag')
+        unique_binds, unique_inds = np.unique(sim['balrog_index'],return_index=True)
+        sim = sim[unique_inds]
+        
+        truthMatched = mergeCatalogsUsingPandas(sim=sim,truth=truth)
+        
+        sim = sim[np.in1d(sim['balrog_index'],truthMatched['balrog_index'])]
+        sim.sort(order='balrog_index')
+        truthMatched.sort(order='balrog_index')
+
+        
+        truthMatcheds.append(truthMatched)
+        truths.append(truth)
+        sims.append(sim)
+
+    sim = np.hstack(sims)
+    truth = np.hstack(truths)
+    truthMatched = np.hstack(truthMatcheds)
+    
     des = GetDESCat(depthmap, nside, tilestuff, sim, band=band,depth = depth)
     #slr_mag, slr_quality = slr_map.addZeropoint(band, des['ra'], des['dec'], des['mag'], interpolate=True)
     #des['mag'] = slr_mag
     des = cleanCatalog(des, tag='mag')
-
-    uind, simUniqueIndices = np.unique(sim['balrog_index'] , return_index = True)
-    sim = sim[simUniqueIndices]
     
-    sim = np.sort(sim,order='balrog_index')
-    truth = np.sort(truth,order='balrog_index')
-    truthMatched = truth[np.in1d(truth['balrog_index'], sim['balrog_index'], assume_unique=True)]
-    sim = sim[np.in1d(sim['balrog_index'], truthMatched['balrog_index'], assume_unique = True)]
-
     return des, sim, truthMatched, truth, tileinfo
     
 
@@ -325,7 +352,6 @@ def makeHistogramPlots(hist_est, bin_centers, errors, catalog_real_obs, catalog_
     ax.set_ylabel('normalized reconstruction residuals')
     ax.set_ylim([-1,1])
     ax.set_xlim([15,30])
-
     plt.show(block=True)
     
 
@@ -378,6 +404,71 @@ def removeNeighbors(thing1, thing2, radius= 2./3600):
     keep = ~np.in1d(thing1['balrog_index'],thing1['balrog_index'][m1])
     return keep
 
+
+def hpHEALPixelToRaDec(pixel, nside=4096, nest=True):
+    theta, phi = hp.pix2ang(nside, pixel, nest=nest)
+    ra, dec = convertThetaPhiToRaDec(theta, phi)
+    return ra, dec
+
+def hpRaDecToHEALPixel(ra, dec, nside=  4096, nest= True):
+    phi = ra * np.pi / 180.0
+    theta = (90.0 - dec) * np.pi / 180.0
+    hpInd = hp.ang2pix(nside, theta, phi, nest= nest)
+    return hpInd
+
+def convertThetaPhiToRaDec(theta, phi):
+    ra = phi*180.0/np.pi
+    dec = 90.0 - theta*180.0/np.pi
+    return ra,dec
+
+def convertRaDecToThetaPhi(ra, dec):
+    theta = (90.0 - dec) * np.pi / 180.0
+    phi =  ra * np.pi / 180.0
+    return theta, phi
+
+def buildBadRegionMap(sim, truth, nside=4096, nest = True, magThresh=1., HPIndices=None):
+    '''
+    Note that here, "truth" really means "truthMatched".
+    '''
+    npix = hp.nside2npix(nside)
+    pixInd = np.arange(npix)
+    simInd = hpRaDecToHEALPixel( sim['ra'],sim['dec'], nside=nside, nest= nest)
+    magErr = np.abs(truth['mag'] - sim['mag'])
+    badObj = magErr > magThresh
+    binct_bad = np.bincount(simInd[badObj],minlength=npix)
+    binct_tot = np.bincount(simInd, minlength = npix)
+    regionMap = binct_bad * 1. / binct_tot
+    regionMap[binct_tot == 0] = hp.UNSEEN
+    return regionMap
+
+def visualizeHealPixMap(theMap, nest=True, title="map"):
+    
+    from matplotlib.collections import PolyCollection
+
+    nside = hp.npix2nside(theMap.size)
+    mapValue = theMap[theMap != hp.UNSEEN]
+    indices = np.arange(theMap.size)
+    seenInds = indices[theMap != hp.UNSEEN]
+
+    print "Building polygons from HEALPixel map."
+    vertices = np.zeros( (seenInds.size, 4, 2) )
+    print "Building polygons for "+str(seenInds.size)+" HEALPixels."
+    for HPixel,i in zip(seenInds,xrange(seenInds.size)):
+        corners = hp.vec2ang( np.transpose(hp.boundaries(nside,HPixel,nest=True) ) )
+        # HEALPix insists on using theta/phi; we in astronomy like to use ra/dec.
+        vertices[i,:,0] = corners[1] * np.pi / 180.0
+        vertices[i,:,1] = 90.0 - corners[0]*180.0/np.pi
+
+    fig, ax = plt.subplots(figsize=(12,12))
+    coll = PolyCollection(vertices, array = mapValue, cmap = plt.cm.gray, edgecolors='none')
+    ax.add_collection(coll)
+    ax.set_title(title)
+    ax.autoscale_view()
+    fig.colorbar(coll,ax=ax)
+    print "Writing to file: "+title+".png"
+    fig.savefig(title+".png",format="png")
+
+    
 
 def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = None,maglimits = [22.5, 24.5],band='i'):
     # Get the unique tile list.
@@ -440,17 +531,111 @@ def makeTheMap(des=None, truth=None, truthMatched=None, sim=None, tileinfo = Non
     stop
 
 
-def main(argv):
-    # Get catalogs.
-    band = 'r'
-    des, sim, truthMatched, truth, tileInfo = getCatalogs(reload = False, band=band)
+def getGoodRegionIndices(catalog=None, badHPInds=None, nside=4096):
+    hpInd = hpRaDecToHEALPixel(catalog['ra'], catalog['dec'], nside=nside, nest= True)
+    keep = ~np.in1d(hpInd, badHPInds)
+    return keep
     
-    # Find the inference for things with zero 
-    pure_inds =  removeNeighbors(sim, des) & ( truthMatched['mag']>0 ) & ( np.abs(truthMatched['mag'] - sim['mag']) < .5) 
+    
+def getPostageStamps(catalog, badHPindices, nside=4096,band=None):
+    print "Writing postage stamp catalogs."
+    # Write the catalog of bad things to file.
+    # First, assign HEALPixels to each catalog object:
+    hpInd = hpRaDecToHEALPixel(catalog['ra'], catalog['dec'], nside=nside,nest= True)
+    badObj = catalog[np.in1d(hpInd, badHPindices)]
+    badHPInds = hpRaDecToHEALPixel(badObj['ra'], badObj['dec'], nside=nside, nest= True)
+    
+    # Organize 'objects' by tile.
+    uInds = np.unique(badHPInds)
+    tiles = np.zeros(uInds.size, dtype = [('tilename', 'S12'),('xmin_image', '>i8'),('ymin_image', '>i8'),('xmax_image', '>i8'),
+                                          ('ymax_image', '>i8'),('HEALPixel', '>f8')])
+    tiles['HEALPixel'] = uInds
+
+    for index, i in zip(uInds,xrange(uInds.size)):
+        if (i % 10) == 0:
+            print i,uInds.size
+        theseBadObjs = badObj[badHPInds == index]
+        tiles[i]['xmin_image'] = np.min(theseBadObjs['xmin_image'])
+        tiles[i]['xmax_image'] = np.max(theseBadObjs['xmax_image'])
+        tiles[i]['ymin_image'] = np.min(theseBadObjs['ymin_image'])
+        tiles[i]['ymax_image'] = np.max(theseBadObjs['ymax_image'])
+        tiles[i]['tilename'] = theseBadObjs['tilename'][0]
+        
+    esutil.io.write('badRegionCutoutCoords-'+band+'.fits',tiles,clobber=True)
+
+    # Now write a file with the bad objects.
+    badObjArray = rf.append_fields( badObj,'HEALPixel', data=badHPInds)
+    esutil.io.write('badObjectCoords-'+band+'.fits',badObjArray,clobber=True)
+    
+    return tiles
+
+def main(argv):
+
+    parser = argparse.ArgumentParser(description = 'Perform magnitude distribution inference on DES data.')
+    parser.add_argument('filter',help='filter name',choices=['g','r','i','z','Y'])
+    parser.add_argument("-r","--reload",help='reload catalogs from DESDB', action="store_true")
+    args = parser.parse_args(argv[1:])
+    band = args.filter
+    print band
+    # Get catalogs.
+    print "performing inference in band: "+args.filter
+    print "Reloading from DESDM:", args.reload
+    des, sim, truthMatched, truth, tileInfo = getCatalogs(reload = args.reload, band = args.filter)
+    print sim.size
+    # Do the inference for things that aren't badly blended to start with.
+    # Yes, this is cheating. Yes, we'll fix it later.
+    # --------------------------------------------------
+    pure_inds =  ( removeNeighbors(sim, des) & ( truthMatched['mag']>0 ) &
+                   (np.sqrt( (truthMatched['ra'] - sim['ra'])**2 + (truthMatched['dec']-sim['dec'])**2 )*3600 < 0.1) )
+    #pure_inds = ( truthMatched['mag'] > 0. ) & ( np.abs(truthMatched['mag'] - sim['mag']) < 2. )
     truthMatched = truthMatched[pure_inds]
     sim = sim[pure_inds]
+    print sim.size
+    # --------------------------------------------------
+    
+    eliMap = hp.read_map("sva1_gold_1.0.4_goodregions_04_equ_nest_4096.fits", nest=True)
+    nside = hp.npix2nside(eliMap.size)
+
+    # First, determine which HPixels have objects in them.
+    FullRegionMap = buildBadRegionMap(sim, truthMatched, nside=nside )
+    allIndices = np.arange(eliMap.size)
+    useIndices = allIndices[FullRegionMap != hp.UNSEEN]
+    eliMap[FullRegionMap == hp.UNSEEN] = hp.UNSEEN
+    masked = (eliMap == 1)
+    unmasked = (eliMap==0)
+    eliMap[masked] = 0
+    eliMap[unmasked] = 1.
+
+
+    
+    # Then build a bad Region Map
+    regionMap = buildBadRegionMap(sim, truthMatched, nside=nside, HPIndices = useIndices, magThresh = 2.0, nest=True)
+    regionMapSelected = regionMap*0. + hp.UNSEEN
+    regionMapSelected[( regionMap >= 0.) | (eliMap == 0.0)] = 1.0
+    visualizeHealPixMap(regionMap,title='badFractionMap-'+band)
+    visualizeHealPixMap(eliMap,title='sva1_gold_1.0.4_goodregions_04')
+    visualizeHealPixMap(regionMapSelected,title='BalrogMask-'+band+'_sva1v2')
+    
+    badIndices = allIndices[( regionMap > 0.1 ) | (eliMap == 0.0)]
+    interestingIndices = allIndices[( regionMap > 0.1 ) & (eliMap == 1.0)]
+
+    #getPostageStamps( sim, interestingIndices, nside=nside, band=band)
+    
+    obsKeepIndices = getGoodRegionIndices(catalog=sim, badHPInds=badIndices, nside=nside)
+    truthKeepIndices = getGoodRegionIndices(catalog=truth, badHPInds=badIndices, nside=nside)
+    desKeepIndices = getGoodRegionIndices(catalog=des, badHPInds=badIndices, nside=nside)
+
+    sim = sim[obsKeepIndices]
+    truthMatched = truthMatched[obsKeepIndices]
+    truth = truth[truthKeepIndices]
+    des = des[desKeepIndices]
+    print sim.size
+    # Remove everything in a bad region.
+    
     
     # Infer underlying magnitude distribution for whole catalog.
+    print "Starting regularized inference procedure."
+
     N_real_est, truth_bins_centers, truth_bins, obs_bins, errors = doInference(truth, truthMatched, sim, des,
                                                                                lambda_reg = .01, tag='mag', doplot = True)
     N_obs,_ = np.histogram(des['mag'],bins=truth_bins)
@@ -462,7 +647,7 @@ def main(argv):
     
     # --------------------------------------------------
     y = makeTheMap(des=des, truth=truth, truthMatched = truthMatched, sim=sim, tileinfo = tileInfo,band=band )
-    stop
+
 
 
     
