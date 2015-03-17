@@ -56,14 +56,13 @@ def GetPix(nside, ra, dec, nest=True):
     pix = hp.ang2pix(nside, theta, phi, nest=nest)
     return pix
 
-def GetDepthCut(map, nside, ra, dec, depth = 50.0):
+def GetDepthCut(map, nside, ra, dec, depth = 0.0):
     pix = GetPix(nside, ra, dec)
     depths = map[pix]
-    ok_depths = (depths > 0 ) & (depths < depth)
-    #ok_depths = (depths > 0 )
+    ok_depths =  (depths > depth)
     return ok_depths
 
-def ValidDepth(map, nside, arr, rakey='ra', deckey='dec', depth = 50.0):
+def ValidDepth(map, nside, arr, rakey='ra', deckey='dec', depth = 0.0):
     ok_depths = GetDepthCut(map, nside, arr[rakey], arr[deckey], depth = depth)
     arr = arr[ok_depths]
     return arr

@@ -1,4 +1,4 @@
-[#!/usr/bin/env python
+#!/usr/bin/env python
 
 import numpy as np
 from numpy import recarray
@@ -9,6 +9,9 @@ import esutil
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, FormatStrFormatter
+
+import numpy.lib.recfunctions as recfunctions
+
 
 def fluxToMag(mag, zeropoint = 25.):
     return 10.**((zeropoint - mag)/2.5)
@@ -66,6 +69,8 @@ def generateTruthCatalog(n_obj = 10000, slope = 1.0, downsample = False):
     catalog['SB'] = surfaceBrightness
     catalog['sky_SB'] = sky_sb
     catalog['blended'] = False
+
+    catalog = recfunctions.append_fields(catalog, 'data_truth', catalog['data'])
     return catalog
     
 
@@ -109,6 +114,7 @@ def applyTransferFunction(catalog,SN_cut = 5., mag_cut = 26., cbias = 0.0, mbias
     
     # Apply a selection based on the new, noisy surface brightness.
     obs_catalog = obs_catalog[(SB_new >  obs_catalog['sky_SB']) & (obs_catalog['size'] > 0.05) & (newFlux > 0)]
+
     return obs_catalog
     
 
