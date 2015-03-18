@@ -293,7 +293,7 @@ def chooseBins(catalog = None, tag=None, binsize = None, upperLimit = None, lowe
     bins[-1] = bins[-1] + 0.001*binsize
     return bins
 
-def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None,
+def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0.,
                           obs_bins = None, truth_bins = None, simTag = None, truthTag = None):
     obs_bin_index = np.digitize(sim[simTag], obs_bins) - 1
     truth_bin_index = np.digitize(truthMatched[truthTag], truth_bins) - 1
@@ -312,6 +312,8 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None,
         if N_truth[truth_bin_index[i]] > 0:
             L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
                                                         1./N_truth[truth_bin_index[i]] )
+
+    L[L < Lcut] = 0.
     return L
     
     
@@ -337,7 +339,7 @@ def getAllLikelihoods( truth=None, sim=None, truthMatched = None, healConfig=Non
     truth_bin_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
     obs_bin_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
         
-    Lmaster = np.empty( (obs_bins.size-1 , truth_bins.size-1, useInds.size) )
+    Lensemble = np.empty( (obs_bins.size-1 , truth_bins.size-1, useInds.size) )
 
     if doplot is True:
         from matplotlib.backends.backend_pdf import PdfPages
@@ -345,9 +347,9 @@ def getAllLikelihoods( truth=None, sim=None, truthMatched = None, healConfig=Non
         pp = PdfPages('likelihoods.pdf')
         fig,ax = plt.subplots(figsize=(6.,6.))
         # Make a plot of the likelihood of the whole region.
-        totalLikelihood =  makeLikelihoodMatrix( sim=sim, truth=truth, truthMatched = truthMatched,
-                                                 obs_bins = obs_bins, truth_bins = truth_bins, simTag = obsTag, truthTag = truthTag)
-        im = ax.imshow(totalLikelihood, origin='lower',cmap=plt.cm.Greys, norm = LogNorm(vmin=1e-6,vmax=1),
+        masterLikelihood =  makeLikelihoodMatrix( sim=sim, truth=truth, truthMatched = truthMatched, Lcut = 1e-4,
+                                                  obs_bins = obs_bins, truth_bins = truth_bins, simTag = obsTag, truthTag = truthTag)
+        im = ax.imshow(masterLikelihood, origin='lower',cmap=plt.cm.Greys, norm = LogNorm(vmin=1e-6,vmax=1),
                        extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
         ax.set_xlabel('truth mag.')
         ax.set_ylabel('measured mag.')
@@ -361,10 +363,9 @@ def getAllLikelihoods( truth=None, sim=None, truthMatched = None, healConfig=Non
         thisTruth = truth[truth['HEALIndex'] == hpIndex]
         thisTruthMatched = truthMatched[sim['HEALIndex'] == hpIndex]
         if thisTruth.size > 100:
-            thisLikelihood = makeLikelihoodMatrix( sim=thisSim, truth=thisTruth, truthMatched = thisTruthMatched,
+            thisLikelihood = makeLikelihoodMatrix( sim=thisSim, truth=thisTruth, truthMatched = thisTruthMatched,Lcut = 1e-3,
                             obs_bins = obs_bins, truth_bins = truth_bins, simTag = obsTag, truthTag = truthTag)
-        
-            Lmaster[:,:,i] = thisLikelihood
+            Lensemble[:,:,i] = thisLikelihood
             if doplot is True:
                 fig,ax = plt.subplots(figsize = (6.,6.))
                 im = ax.imshow(thisLikelihood, origin='lower',cmap=plt.cm.Greys, norm = LogNorm(vmin=1e-6,vmax=1),
@@ -378,7 +379,7 @@ def getAllLikelihoods( truth=None, sim=None, truthMatched = None, healConfig=Non
     if doplot is True:
         pp.close()
 
-    return Lmaster, useInds
+    return Lensemble, useInds, masterLikelihood, truth_bin_centers, obs_bin_centers
     
 
 def getGoodRegionIndices(catalog=None, badHPInds=None, nside=4096):
@@ -405,6 +406,46 @@ def excludeBadRegions(des,balrogObs, balrogTruthMatched, balrogTruth, band='i'):
     return des,balrogObs, balrogTruthMatched, balrogTruth
 
 
+def likelihoodPCA(likelihood= None,  likelihood_master = None):
+  # This does a simple PCA on the array of likelihood matrices to find a compact basis with which to represent the likelihood.
+  origShape = np.shape(likelihood)
+  likelihood_1d = np.reshape(likelihood, (origShape[0]*origShape[1], origShape[2]))
+  
+  L1d_master = np.reshape(likelihood_master, origShape[0]*origShape[1])
+
+  # Subtract L1d_master from each row of L1d:
+  #for i in xrange(origShape[2]):
+  #  likelihood_1d[:,i] = likelihood_1d[:,i] - L1d_master
+  L1d = likelihood_1d.T
+  U,s,Vt = np.linalg.svd(L1d,full_matrices=False)
+  V = Vt.T
+  ind = np.argsort(s)[::-1]
+  ind = np.argsort(s)[::-1]
+  U = U[:, ind]
+  s = s[ind]
+  V = V[:, ind]
+  
+  likelihood_pcomp = V.reshape(origShape)
+    
+  return likelihood_pcomp, s
+
+def doLikelihoodPCAfit(pcaComp = None, master = None, eigenval = None, likelihood =None, n_component = 5, Lcut = 0.):
+
+    # Perform least-squares: Find the best combination of master + pcaComps[:,:,0:n_component] that fits likelihood
+    origShape = likelihood.shape
+    L1d = likelihood.reshape(likelihood.size)
+    pca1d = pcaComp.reshape( ( likelihood.size, pcaComp.shape[-1]) )
+    pcafit = pca1d[:,0:(n_component)]
+    m1d = np.reshape(master,master.size)
+    #allfit = np.hstack((m1d[:,None], pcafit) )
+    allfit = pcafit
+    coeff, resid, _, _  = np.linalg.lstsq(allfit, L1d)
+    bestFit = np.dot(allfit,coeff)
+    bestFit2d = bestFit.reshape(likelihood.shape)
+    bestFit2d[bestFit2d < Lcut] = 0.
+    return bestFit2d
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description = 'Perform magnitude distribution inference on DES data.')
     parser.add_argument('filter',help='filter name',choices=['g','r','i','z','Y'])
@@ -419,23 +460,46 @@ def main(argv):
     des, sim, truthMatched, truth = excludeBadRegions(des,sim, truthMatched, truth,band=band)
     print sim.size
 
-    
     truth = truth[truth['mag'] > 0]
-
-    offset = np.sqrt((truthMatched['ra_sim']-truthMatched['ra'])**2 + ((truthMatched['dec_sim']-truthMatched['dec']))**2)*3600
-    keep = (truthMatched['mag'] > 0) & (offset < 1.)
+    keep = (truthMatched['mag'] > 0)
     sim = sim[keep]
     truthMatched = truthMatched[keep]
 
     HEALConfig = getHealConfig(map_nside = 64)
     print "Getting likelihood matrices for each HEALPixel"
-    Likelihoods, HEALPixels = getAllLikelihoods(truth=truth, sim=sim, truthMatched = truthMatched,
-                                                healConfig=HEALConfig ,doplot = True)
+    Likelihoods, HEALPixels, masterLikelihood, truth_bin_centers, obs_bin_centers = getAllLikelihoods(truth=truth, sim=sim,
+                                                                                                      truthMatched = truthMatched,
+                                                                                                      healConfig=HEALConfig ,doplot = True)
     
     import esutil
     print "Writing likelihoods to file masterLikelihoodFile.fits"
     esutil.io.write('masterLikelihoodFile.fits',Likelihoods, ext=1)
     esutil.io.write('masterLikelihoodFile.fits',HEALPixels, ext=2)
+
+    # Solve for the pca components.
+    print "Performing PCA fit over all the likelihoods."
+    Lpca, pcaEigen = likelihoodPCA(likelihood = Likelihoods, likelihood_master = masterLikelihood)
+    # Loop over the likelihoods again. Find the best low-n PCA fit to each.
+    L_fit = Likelihoods * 0.
+    # And make a plot showing the likelihood, the best fit, and the residual map.
+    from matplotlib.backends.backend_pdf import PdfPages
+    from matplotlib.colors import LogNorm
+    pp = PdfPages('likelihood_pca_fit.pdf')
+    print "Making plot of all the likelihoods and their best fits"
+    for i in xrange(HEALPixels.size):
+        L_fit[:,:,i] = doLikelihoodPCAfit( pcaComp = Lpca, master = masterLikelihood, Lcut = 1e-4,
+                                           eigenval =  pcaEigen, likelihood = Likelihoods[:,:,i], n_component = 5)
+        fig,ax = plt.subplots(nrows=1,ncols=3,sharey=True,figsize = (18.,6.))
+        im0 = ax[0].imshow(masterLikelihood, origin='lower',cmap=plt.cm.Greys, norm = LogNorm(vmin=1e-6,vmax=1),
+                          extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
+        im1 = ax[1].imshow(Likelihoods[:,:,i], origin='lower',cmap=plt.cm.Greys, norm = LogNorm(vmin=1e-6,vmax=1),
+                          extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
+        im2 = ax[2].imshow(L_fit[:,:,i], origin='lower',cmap=plt.cm.Greys, norm = LogNorm(vmin=1e-6,vmax=1),
+                          extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
+        fig.colorbar(im2,ax=ax[2])
+        pp.savefig(fig)
+    pp.close()
+        
     print "Done."
 
     
