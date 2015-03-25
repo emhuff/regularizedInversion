@@ -473,7 +473,7 @@ def doLikelihoodPCAfit(pcaComp = None, master = None, eigenval = None, likelihoo
     coeff, resid, _, _  = np.linalg.lstsq(allfit, L1d)
     bestFit = np.dot(allfit,coeff)
     bestFit2d = bestFit.reshape(likelihood.shape)
-    bestFit2d = bestFit2d + master
+    #bestFit2d = bestFit2d + master
     bestFit2d[bestFit2d < Lcut] = 0.
 
     m_coeff, m_resid, _, _ = np.linalg.lstsq(allfit, m1d)
