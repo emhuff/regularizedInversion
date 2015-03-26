@@ -16,34 +16,35 @@ def position_angle(cat1, cat2, ratag1 = 'ra', dectag1='dec',ratag2='ra',dectag2=
     return phi, dra, ddec
 
 
-def xMatchStars( catalog= None, ratag = 'ra', dectag = 'dec', starfile='../../Data/2mass_stars_south_bgt20.fits', radius = 100./3600, starMagRange = None):
+def xMatchStars( catalog= None, ratag = 'ra', dectag = 'dec', starfile='../../Data/2mass_stars_south_bgt20.fits', radius = 100./3600.):
     import esutil
     stars = esutil.io.read(starfile)
-    if starMagRange is not None:
-        stars =stars[ ( stars['J_M'] > np.min(starMagRange) ) & ( stars['J_M'] <= np.max(starMagRange) ) ]
-    
-    
     depth=10
     h = esutil.htm.HTM(depth)
     catind,starind, d12 = h.match(catalog[ratag],catalog[dectag],stars['RA'],stars['DEC'],radius,maxmatch=0)
     posAngle,dx,dy = position_angle(catalog[catind], stars[starind],ratag2='RA',dectag2='DEC')
-    
     return catalog[catind], stars[starind], posAngle, dx, dy, d12
 
 
-def xCorrStars(catalog = None, ratag = 'ra', dectag = 'dec',starfile='../../Data/2mass_stars_south_bgt20.fits', radius = 300./3600., starMagRange = None, thresh = 1.0, nbins=100):
+def xCorrStars(catalog = None, ratag = 'ra', dectag = 'dec',starfile='../../Data/2mass_stars_south_bgt20.fits', radius = 300./3600., starMagBins = None, thresh = 1.0, nbins=100):
 
-    _,_,_,_,_, d_all = xMatchStars(catalog=catalog, ratag=ratag, dectag=dectag, starfile=starfile, radius=radius, starMagRange = starMagRange)
-    badobj = catalog[np.abs(catalog['mag_auto'] - catalog['mag']) > thresh]
+    mCat, mStars,_,_,_, d12 = xMatchStars(catalog=catalog, ratag=ratag, dectag=dectag, starfile=starfile, radius=radius)
     
-    _,_,_,_,_, d_bad = xMatchStars(catalog=badobj, ratag=ratag, dectag=dectag, starfile=starfile, radius=radius, starMagRange = starMagRange)
+    magBinsLower = starMagBins[0:-1]
+    magBinsUpper = starMagBins[1:]
+    rbins = np.linspace(0,radius,nbins+1)
+    bin_centers = (rbins[0:-1] + rbins[1:])/2.
+    xi_arr = np.zeros((nbins,magBinsLower.size))
 
-    bins = np.linspace(0,radius,nbins)
-    h_bad,_ = np.histogram(d_bad, bins=bins)
-    h_all,_ = np.histogram(d_all, bins=bins)
-    h = h_bad*1. / h_all - 1.
-    stop
-    return h
+    for lower, upper, i in zip(magBinsLower, magBinsUpper, xrange(magBinsLower.size)):
+        these_all = ( mStars['J_M'] > lower) & (mStars['J_M'] <= upper)
+        these_bad = these_all & ( np.abs(mCat['mag_auto'] - mCat['mag']) > thresh)
+        h_bad,_ = np.histogram(d12[these_bad], bins= rbins, density=True)
+        h_all,_ = np.histogram(d12[these_all], bins=rbins, density=True)
+        xi_arr[:,i]  = h_bad*1./h_all-1.
+    
+    xi_arr[~np.isfinite(xi_arr)] = 0.0
+    return xi_arr, bin_centers
 
 def angleBinnedErrors(truthMatched = None, thresh=False):
 
@@ -143,18 +144,22 @@ def main(argv):
     ax2.set_title("positions of catastrophic \n mag. errors")
     fig.colorbar(im2,ax=ax2)
     
-    faintRange = [13.,18.]
-    brightRange = [5.,13.]
-    xi, r = xCorrStars(catalog = truthMatched, starMagRange = None, thresh = 1.0, nbins=100)
-    xi_faint, r_faint = xCorrStars(catalog = truthMatched, starMagRange = faintRange, thresh=1.0, nbins = 100.)
-    xi_bright, r_bright = xCorrStars(catalog = truthMatched, starMagRange = brightRange, thresh=1.0, nbins = 100.)
-    ax3.plot(r,xi,label='all stars')
-    ax3.plot(r_faint, xi_faint, label = str(faintRange[0])+' < J_M < '+str(faintRange[1]))
-    ax3.plot(r_bright, xi_bright, label = str(brightRange[0])+' < J_M < '+str(brightRange[1]))
-    ax3.legend(loc='best')
+    nMagBins = 8
+    magbins = np.linspace(5. ,18. ,nMagBins+1)
+    xi, r = xCorrStars(catalog = truthMatched, starMagBins =magbins, thresh = 1.0, nbins=50)
+    for i in xrange(nMagBins):
+        label = str(np.round(magbins[i],decimals=1)) + ' < J_M < ' + str(np.round(magbins[i+1],decimals=1))
+        ax3.plot(r*3600., np.arcsinh(xi[:,i]), label = label,color=plt.cm.cool(i*(1./nMagBins)))
 
+    ax3.set_ylabel('arcsinh(xi)')
+    ax3.set_xlabel('sep. (arcsec)')
+    ax3.set_ylim([-1,2])
+    ax3.axhline(0.,linestyle='--',color='red')
+    ax3.legend(bbox_to_anchor=(0.9, 1), loc=2, borderaxespad=0.)
+    #ax3.legend(loc='best')
+    np.savez("star_proximity_effects",xi=xi,r=r,magbins=magbins)
     
-    fig.savefig("magnitude_error_stars_2d.png")
+    fig.savefig("magnitude_error_stars_2d"+band+".png")
 
 
 
