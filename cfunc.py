@@ -228,6 +228,7 @@ def GetFromDB( band='i', depth = 0.0,tables =['sva1v2','sva1v3_2']): # tables =[
         truth = removeBadTilesFromTruthCatalog(truth)
         truth = ValidDepth(depthmap, nside, truth, depth = depth)
         truth = RemoveTileOverlap(tilestuff, truth)
+        truth = cleanCatalog(truth,tag='mag')
         unique_binds, unique_inds = np.unique(truth['balrog_index'],return_index=True)
         truth = truth[unique_inds]
 
@@ -258,36 +259,6 @@ def GetFromDB( band='i', depth = 0.0,tables =['sva1v2','sva1v3_2']): # tables =[
     return des, sim, truthMatched, truth, tileinfo
 
 
-def getCatalogs(reload=False,band='i'):
-
-    # Check to see whether the catalog files exist.  If they do, then
-    # use the files. If at least one does not, then get what we need
-    # from the database
-
-    fileNames = ['desCatalogFile-'+band+'.fits','BalrogObsFile-'+band+'.fits',
-                 'BalrogTruthFile-'+band+'.fits', 'BalrogTruthMatchedFile-'+band+'.fits',
-                 'BalrogTileInfo.fits']
-    exists = True
-    for thisFile in fileNames:
-        print "Checking for existence of: "+thisFile
-        if not os.path.isfile(thisFile): exists = False
-    if exists and not reload:
-        desCat = esutil.io.read(fileNames[0])
-        BalrogObs = esutil.io.read(fileNames[1])
-        BalrogTruth = esutil.io.read(fileNames[2])
-        BalrogTruthMatched = esutil.io.read(fileNames[3])
-        BalrogTileInfo = esutil.io.read(fileNames[4])
-    else:
-        print "Cannot find files, or have been asked to reload. Getting data from DESDB."
-        desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo = GetFromDB(band=band)
-        esutil.io.write( fileNames[0], desCat , clobber=True)
-        esutil.io.write( fileNames[1], BalrogObs , clobber=True)
-        esutil.io.write( fileNames[2], BalrogTruth , clobber=True)
-        esutil.io.write( fileNames[3], BalrogTruthMatched , clobber=True)
-        esutil.io.write( fileNames[4], BalrogTileInfo, clobber=True)
-        
-    return desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo
-
 def hpRaDecToHEALPixel(ra, dec, nside=  4096, nest= True):
     phi = ra * np.pi / 180.0
     theta = (90.0 - dec) * np.pi / 180.0
@@ -305,7 +276,7 @@ def convertRaDecToThetaPhi(ra, dec):
     return theta, phi
 
 def HealPixifyCatalogs(catalog=None, healConfig=None, ratag='ra', dectag = 'dec'):
-    HealInds = hpRaDecToHEALPixel( catalog[ratag],catalog[dectag], nside= healConfig['map_nside'], nest= healConfig['nest'])    
+    HealInds = hpRaDecToHEALPixel( catalog[ratag],catalog[dectag], nside= healConfig['out_nside'], nest= healConfig['nest'])    
     healCat = rf.append_fields(catalog,'HEALIndex',HealInds,dtypes=HealInds.dtype)
     return healCat
 
@@ -354,3 +325,65 @@ def removeNeighbors(thing1, thing2, radius= 2./3600):
     keep = ~np.in1d(thing1['balrog_index'],thing1['balrog_index'][m1])
     return keep
 
+
+def getCatalogs(reload=False,band='i'):
+    # Check to see whether the catalog files exist.  If they do, then
+    # use the files. If at least one does not, then get what we need
+    # from the database
+
+    fileNames = ['desCatalogFile-'+band+'.fits','BalrogObsFile-'+band+'.fits',
+                 'BalrogTruthFile-'+band+'.fits', 'BalrogTruthMatchedFile-'+band+'.fits',
+                 'BalrogTileInfo.fits']
+    exists = True
+    for thisFile in fileNames:
+        print "Checking for existence of: "+thisFile
+        if not os.path.isfile(thisFile): exists = False
+    if exists and not reload:
+        desCat = esutil.io.read(fileNames[0])
+        BalrogObs = esutil.io.read(fileNames[1])
+        BalrogTruth = esutil.io.read(fileNames[2])
+        BalrogTruthMatched = esutil.io.read(fileNames[3])
+        BalrogTileInfo = esutil.io.read(fileNames[4])
+    else:
+        print "Cannot find files, or have been asked to reload. Getting data from DESDB."
+        desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo = GetFromDB(band=band)
+        esutil.io.write( fileNames[0], desCat , clobber=True)
+        esutil.io.write( fileNames[1], BalrogObs , clobber=True)
+        esutil.io.write( fileNames[2], BalrogTruth , clobber=True)
+        esutil.io.write( fileNames[3], BalrogTruthMatched , clobber=True)
+        esutil.io.write( fileNames[4], BalrogTileInfo, clobber=True)
+        
+    return desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo
+
+
+def getCleanCatalogs( reload = False, band=None, isolated=False, nside=None):
+    
+    if band is None:
+        print "Please specify a filter using the 'band' keyword argument."
+        print "Choose one of [grizY]."
+        
+        
+    des, balrogObs, balrogTruthMatched, balrogTruth, balrogTileInfo = getCatalogs(reload=reload, band=band)
+
+    # Remove things in regions that are officially masked.
+    des, balrogObs, balrogTruthMatched, balrogTruth = excludeBadRegions(des,balrogObs, balrogTruthMatched, balrogTruth, band=band)
+    
+    # if the isolated keyword is set, exclude things within some
+    # separation from a pre-existing DES detection.
+    if isolated is not False:
+        print "isolated keyword should be set to a number, in arcseconds."
+        keep = removeNeighbors(balrogTruthMatched, des, radius= float(isolated)/3600)
+        balrogTruthMatched = balrogTruthMatched[keep]
+        balrogObs = balrogObs[keep]
+    
+    # nside is set, then create a HEALPixel configuration and
+    # assign pixel indices to each object.
+    if nside is not None:
+        HEALConfig = getHealConfig(map_nside = 4096, out_nside = nside )
+        des = HealPixifyCatalogs(catalog=des, healConfig=HEALConfig)
+        balrogObs = HealPixifyCatalogs(catalog=balrogObs, healConfig=HEALConfig)
+        balrogTruth = HealPixifyCatalogs(catalog=balrogTruth, healConfig=HEALConfig)
+        balrogTruthMatched = HealPixifyCatalogs(catalog=balrogTruthMatched, healConfig=HEALConfig)
+        return des, balrogObs, balrogTruthMatched, balrogTruth,HEALConfig
+    else:
+        return des, balrogObs, balrogTruthMatched, balrogTruth
