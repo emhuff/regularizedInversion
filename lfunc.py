@@ -193,15 +193,15 @@ def doLikelihoodPCAfit(pcaComp = None,  likelihood =None, n_component = 5, Lcut 
 
 
 def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = None, tag = 'mag_auto',
-                invType = 'basic', lambda_reg = 1e-3):
+                invType = 'basic', lambda_reg = 1e-6):
 
 
     N_real_obs, _  = np.histogram(catalog[tag], bins = obs_bins)
     A = likelihood.copy()
     if invType is 'basic':
-        Ainv = np.linalg.pinv(A)
+        Ainv = np.linalg.pinv(A,rcond = lambda_reg)
     if invType is 'tikhonov':
-        Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(N_real_obs.size) ), A.T)
+        Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(truth_bins.size - 1 ) ), A.T)
 
 
         
