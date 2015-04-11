@@ -133,7 +133,7 @@ def main(argv):
     catalog_sim_truth = generateTruthCatalog(n_obj  = 100000, slope = 2.500, downsample = False)
 
     
-    catalog_ref_truth = truncateTruthCatalog(truth = catalog_sim_truth, mag_cut = 24.0, size_cut = 0.05)
+    catalog_ref_truth = truncateTruthCatalog(truth = catalog_sim_truth, mag_cut = 30.0, size_cut = 0.0)
     
     # Apply some complicated transfer function, get back a simulated
     # simulated observed catalog.
@@ -163,17 +163,17 @@ def main(argv):
 
     N_real_est, est_errs, truth_bin_centers = lfunc.doInference(catalog = catalog_real_obs, likelihood=L, tag='data',
                                                                 obs_bins = obsBins, truth_bins = truthBins,
-                                                                lambda_reg = 1e-2, invType = 'tikhonov')
+                                                                lambda_reg = 1e-3, invType = 'tikhonov')
     N_real_ref, ref_errs, _ = lfunc.doInference(catalog = catalog_real_obs, likelihood=Lref, tag='data',
                                                                 obs_bins = obsBins, truth_bins = truthBins,
-                                                                lambda_reg = 1e-2, invType = 'tikhonov')
+                                                                lambda_reg = 1e-3, invType = 'basic')
 
     N_real_truth, _ = np.histogram(catalog_real_truth['data'], bins = truthBins)
     N_real_obs ,_ = np.histogram(catalog_real_obs['data'], bins= obsBins)
     fig, (ax1, ax2, ax3) = plt.subplots(nrows=1, ncols=3, figsize=(21,7))
-    ax1.plot(truth_bin_centers, N_real_est,label='est.')
+    ax1.errorbar(truth_bin_centers, N_real_est, est_errs,label='est.')
     ax1.plot(truth_bin_centers, N_real_truth,label='truth')
-    ax1.plot(truth_bin_centers, N_real_ref, label='ref')
+    ax1.errorbar(truth_bin_centers, N_real_ref, ref_errs, label='ref')
     ax1.plot(obs_bin_centers, N_real_obs, label='obs')
     ax1.legend(loc='best')
     ax1.set_ylim([0,np.max(N_real_truth)])

@@ -3,21 +3,13 @@
 import matplotlib as mpl
 mpl.use('Agg')
 
-import desdb
 import numpy as np
-import esutil
-import pyfits
-import sys
-import argparse
 import healpy as hp
-import os
-import functions2
-import slr_zeropoint_shiftmap as slr
-import numpy.lib.recfunctions as rf
 
 import matplotlib.pyplot as plt
+from scipy.special import gammaln
 
-
+import emcee
 
 
 def chooseBins(catalog = None, tag=None, binsize = None, upperLimit = None, lowerLimit = None):
@@ -136,7 +128,7 @@ def likelihoodPCA(likelihood= None,  doplot = False, band = None,
     likelihood_1d = np.reshape(likelihood, (origShape[0]*origShape[1], origShape[2]))
     
     
-    L1d = likelihood_1d.T
+    L1d = likelihood_1d.T.copy()
     U,s,Vt = np.linalg.svd(L1d,full_matrices=False)
     V = Vt.T
     ind = np.argsort(s)[::-1]
@@ -145,7 +137,7 @@ def likelihoodPCA(likelihood= None,  doplot = False, band = None,
     s = s[ind]
     V = V[:, ind]
 
-  
+    
     likelihood_pcomp = V.reshape(origShape)
     
     if doplot is True:
@@ -189,25 +181,114 @@ def doLikelihoodPCAfit(pcaComp = None,  likelihood =None, n_component = 5, Lcut 
     bestFit2d = bestFit.reshape(likelihood.shape)
     bestFit2d[bestFit2d < Lcut] = 0.
     
-    return bestFit2d
+    return bestFit2d, coeff
+
+def mcmcLogL(N_truth, N_data, likelihood, lninf=-1000):
+    if np.sum(N_truth < 0.) > 0:
+        return -np.inf
+
+    pObs  = np.dot(likelihood, N_truth) / np.sum(N_truth)
+    pMiss = 1. - np.sum(pObs)
+
+    Nmiss = np.sum(N_truth) - np.sum( np.dot( likelihood, N_truth) ) 
+    Nobs = np.sum( N_data )
+
+    
+    if pMiss == 0.:
+        logPmiss = -np.inf
+    else:
+        logPmiss = np.log(pMiss)
+
+    
+    lpObs = np.zeros(pObs.size)
+    valid = ( pObs > 0. )
+    lpObs[valid] = np.log(pObs[valid])
+    lpObs[~valid] = lninf
+
+    t4 = np.dot(np.transpose(N_data), lpObs)
+    t5 = Nmiss * logPmiss
+    t1 = gammaln(1 + Nmiss + Nobs)
+    t2 = gammaln(1 + Nmiss)
+    t3 = np.sum(gammaln(1 + likelihood))
+    logL = t1 - t2 - t3 + t4 + t5
+
+    return logL
+
+
+def initializeMCMC(N_data, likelihood, multiplier = 1.):
+    print "Initializing MCMC..."
+    A = likelihood.copy()
+    Ainv = np.linalg.pinv(A,rcond = 0.001)
+    N_initial = np.abs(np.dot(Ainv, N_data))
+    covar_truth = np.diag(N_initial)
+    Areg = np.dot(Ainv, A)
+    covar_recon = np.dot( np.dot(Areg, covar_truth), Areg.T)
+    leakage = np.abs(np.dot( Areg, N_initial) - N_initial)
+    errors = np.sqrt( np.diag(covar_recon) ) + leakage
+    nParams = likelihood.shape[1]
+    nWalkers = np.min( [100*nParams, 2000.] )
+
+    N_initial = N_initial*0. + np.mean(N_data)
+    start= np.sqrt( ( N_initial + (multiplier*errors*N_initial) * np.random.randn( nWalkers, nParams ) )**2 )
+
+    return start, nWalkers
 
 
 def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = None, tag = 'mag_auto',
-                invType = 'basic', lambda_reg = 1e-6):
+                invType = 'basic', lambda_reg = 1e-6, prior = None):
 
+    if prior is None:
+        prior = np.zeros(truth_bins.size-1)
 
     N_real_obs, _  = np.histogram(catalog[tag], bins = obs_bins)
+    N_real_obs = N_real_obs*1.0
     A = likelihood.copy()
     if invType is 'basic':
         Ainv = np.linalg.pinv(A,rcond = lambda_reg)
+        N_real_truth = np.dot(Ainv, N_real_obs - np.dot(A, prior)) + prior
+        covar_truth = np.diag(N_real_truth)
+        Areg = np.dot(Ainv, A)
+        covar_recon = np.dot( np.dot(Areg, covar_truth), Areg.T)
+        leakage = np.abs(np.dot( Areg, N_real_truth) - N_real_truth)
+        errors = np.sqrt( np.diag(covar_recon) ) + leakage
+
     if invType is 'tikhonov':
         Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(truth_bins.size - 1 ) ), A.T)
+        N_real_truth = np.dot(Ainv, N_real_obs - np.dot(A, prior)) + prior
+        covar_truth = np.diag(N_real_truth)
+        Areg = np.dot(Ainv, A)
+        covar_recon = np.dot( np.dot(Areg, covar_truth), Areg.T)
+        leakage = np.abs(np.dot( Areg, N_real_truth) - N_real_truth)
+        errors = np.sqrt( np.diag(covar_recon) ) + leakage
 
+    if invType is 'mcmc':
+        start, nWalkers = initializeMCMC(N_real_obs, A)
+        nParams = likelihood.shape[1]
 
+        nSteps = 1000
+        sampler = emcee.EnsembleSampler(nWalkers, nParams, mcmcLogL, args = [N_real_obs, A], threads = 8)
         
+
+        print "burninating mcmc"
+        pos, prob, state = sampler.run_mcmc(start, nSteps)
+        mean_accept = np.mean(sampler.acceptance_fraction)
+        sampler.reset()
+        delta_mean_accept = 1.
+        print "Acceptance fraction: ",mean_accept
+        print "running mcmc"
+
+        while np.abs(delta_mean_accept) > 0.001:
+            pos, prob, state = sampler.run_mcmc( pos, nSteps, rstate0 = state )
+            delta_mean_accept = np.mean(sampler.acceptance_fraction) - mean_accept
+            mean_accept = np.mean(sampler.acceptance_fraction)
+            print "Acceptance fraction: ",mean_accept
+            #print "autocorr_time", sampler.acor
+            N_real_truth = np.mean( sampler.flatchain, axis=0 )
+            errors = np.std( sampler.flatchain, axis=0 )
+            sampler.reset()
+            
+
     truth_bins_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
-    N_real_truth = np.dot(Ainv, N_real_obs)
-    errors = N_real_truth*0.
 
     return N_real_truth, errors, truth_bins_centers
 

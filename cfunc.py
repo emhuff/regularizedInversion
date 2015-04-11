@@ -207,8 +207,8 @@ def mergeCatalogsUsingPandas(sim=None, truth=None, key='balrog_index', suffixes 
 
 
 
-def GetFromDB( band='i', depth = 0.0,tables =['sva1v2','sva1v3_2']): # tables =['sva1v2','sva1v3','sva1v3_2']
-    depthfile = '../sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
+def GetFromDB( band='i', depth = 0.0,tables =['sva1v2','sva1v3','sva1v3_2']): 
+    depthfile = '../../Data/sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
 
     cur = desdb.connect()
     q = "SELECT tilename, udecll, udecur, urall, uraur FROM coaddtile"
@@ -228,7 +228,7 @@ def GetFromDB( band='i', depth = 0.0,tables =['sva1v2','sva1v3_2']): # tables =[
         truth = removeBadTilesFromTruthCatalog(truth)
         truth = ValidDepth(depthmap, nside, truth, depth = depth)
         truth = RemoveTileOverlap(tilestuff, truth)
-        truth = cleanCatalog(truth,tag='mag')
+        #truth = cleanCatalog(truth,tag='mag')
         unique_binds, unique_inds = np.unique(truth['balrog_index'],return_index=True)
         truth = truth[unique_inds]
 
@@ -276,12 +276,16 @@ def convertRaDecToThetaPhi(ra, dec):
     return theta, phi
 
 def HealPixifyCatalogs(catalog=None, healConfig=None, ratag='ra', dectag = 'dec'):
-    HealInds = hpRaDecToHEALPixel( catalog[ratag],catalog[dectag], nside= healConfig['out_nside'], nest= healConfig['nest'])    
-    healCat = rf.append_fields(catalog,'HEALIndex',HealInds,dtypes=HealInds.dtype)
+    HealInds = hpRaDecToHEALPixel( catalog[ratag],catalog[dectag], nside= healConfig['out_nside'], nest= healConfig['nest'])
+    if 'HEALIndex' in catalog.dtype.fields:
+        healCat = catalog.copy()
+        healCat['HEALIndex'] = HEALInds
+    else:
+        healCat = rf.append_fields(catalog,'HEALIndex',HealInds,dtypes=HealInds.dtype)
     return healCat
 
 
-def getHealConfig(map_nside = 4096, out_nside = 128, depthfile = '../sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'):
+def getHealConfig(map_nside = 4096, out_nside = 128, depthfile = '../../Data/sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'):
     HealConfig = {}
     HealConfig['map_nside'] = map_nside
     HealConfig['out_nside'] = out_nside
@@ -326,7 +330,7 @@ def removeNeighbors(thing1, thing2, radius= 2./3600):
     return keep
 
 
-def getCatalogs(reload=False,band='i'):
+def getCatalogs(reload=False,band='i', path = '../../Data/'):
     # Check to see whether the catalog files exist.  If they do, then
     # use the files. If at least one does not, then get what we need
     # from the database
@@ -336,22 +340,23 @@ def getCatalogs(reload=False,band='i'):
                  'BalrogTileInfo.fits']
     exists = True
     for thisFile in fileNames:
-        print "Checking for existence of: "+thisFile
-        if not os.path.isfile(thisFile): exists = False
+        print "Checking for existence of: "+path+thisFile
+        if not os.path.isfile(path+thisFile): exists = False
     if exists and not reload:
-        desCat = esutil.io.read(fileNames[0])
-        BalrogObs = esutil.io.read(fileNames[1])
-        BalrogTruth = esutil.io.read(fileNames[2])
-        BalrogTruthMatched = esutil.io.read(fileNames[3])
-        BalrogTileInfo = esutil.io.read(fileNames[4])
+
+        desCat = esutil.io.read(path+fileNames[0])
+        BalrogObs = esutil.io.read(path+fileNames[1])
+        BalrogTruth = esutil.io.read(path+fileNames[2])
+        BalrogTruthMatched = esutil.io.read(path+fileNames[3])
+        BalrogTileInfo = esutil.io.read(path+fileNames[4])
     else:
         print "Cannot find files, or have been asked to reload. Getting data from DESDB."
         desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo = GetFromDB(band=band)
-        esutil.io.write( fileNames[0], desCat , clobber=True)
-        esutil.io.write( fileNames[1], BalrogObs , clobber=True)
-        esutil.io.write( fileNames[2], BalrogTruth , clobber=True)
-        esutil.io.write( fileNames[3], BalrogTruthMatched , clobber=True)
-        esutil.io.write( fileNames[4], BalrogTileInfo, clobber=True)
+        esutil.io.write( path+fileNames[0], desCat , clobber=True)
+        esutil.io.write( path+fileNames[1], BalrogObs , clobber=True)
+        esutil.io.write( path+fileNames[2], BalrogTruth , clobber=True)
+        esutil.io.write( path+fileNames[3], BalrogTruthMatched , clobber=True)
+        esutil.io.write( path+fileNames[4], BalrogTileInfo, clobber=True)
         
     return desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo
 

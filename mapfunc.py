@@ -17,7 +17,7 @@ def buildBadRegionMap(sim, truth, nside=4096, nest = True, magThresh=1., HPIndic
     regionMap[binct_tot == 0] = hp.UNSEEN
     return regionMap
 
-def visualizeHealPixMap(theMap, nest=True, title="map", norm=None)
+def visualizeHealPixMap(theMap, nest=True, title="map", norm=None, vmin = None, vmax = None):
     
     from matplotlib.collections import PolyCollection
     from matplotlib.colors import Normalize
@@ -32,12 +32,13 @@ def visualizeHealPixMap(theMap, nest=True, title="map", norm=None)
     for HPixel,i in zip(seenInds,xrange(seenInds.size)):
         corners = hp.vec2ang( np.transpose(hp.boundaries(nside,HPixel,nest=True) ) )
         # HEALPix insists on using theta/phi; we in astronomy like to use ra/dec.
-        vertices[i,:,0] = corners[1] * np.pi / 180.0
-        vertices[i,:,1] = 90.0 - corners[0]*180.0/np.pi
+        vertices[i,:,0] = corners[1] *180./np.pi
+        vertices[i,:,1] = 90.0 - corners[0] * 180/np.pi
 
 
     fig, ax = plt.subplots(figsize=(12,12))
     coll = PolyCollection(vertices, array = mapValue, cmap = plt.cm.gray, edgecolors='none')
+    coll.set_clim(vmin=vmin, vmax=vmax)
     ax.add_collection(coll)
     ax.set_title(title)
     ax.autoscale_view()
