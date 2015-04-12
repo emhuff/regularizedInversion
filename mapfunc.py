@@ -37,7 +37,7 @@ def visualizeHealPixMap(theMap, nest=True, title="map", norm=None, vmin = None, 
 
 
     fig, ax = plt.subplots(figsize=(12,12))
-    coll = PolyCollection(vertices, array = mapValue, cmap = plt.cm.gray, edgecolors='none')
+    coll = PolyCollection(vertices, array = mapValue, cmap = plt.cm.seismic, edgecolors='none')
     coll.set_clim(vmin=vmin, vmax=vmax)
     ax.add_collection(coll)
     ax.set_title(title)

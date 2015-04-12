@@ -279,7 +279,7 @@ def HealPixifyCatalogs(catalog=None, healConfig=None, ratag='ra', dectag = 'dec'
     HealInds = hpRaDecToHEALPixel( catalog[ratag],catalog[dectag], nside= healConfig['out_nside'], nest= healConfig['nest'])
     if 'HEALIndex' in catalog.dtype.fields:
         healCat = catalog.copy()
-        healCat['HEALIndex'] = HEALInds
+        healCat['HEALIndex'] = HealInds
     else:
         healCat = rf.append_fields(catalog,'HEALIndex',HealInds,dtypes=HealInds.dtype)
     return healCat
