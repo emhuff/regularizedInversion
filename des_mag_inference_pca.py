@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import matplotlib as mpl
-#mpl.use('Agg')
+mpl.use('Agg')
 
 import argparse
 import matplotlib.pyplot as plt
@@ -78,7 +78,7 @@ def mapHistogramPlots(theMap =None,poly = None, N_recon = None, N_recon_err=None
         ax2.legend(loc='best')
         ax2.set_ylim([1e-4,1])
         pp.savefig(fig)
-        
+        plt.clf()
     pp.close()
 
 
@@ -124,9 +124,9 @@ def populateMap(catalog = None, sim=None, truth=None, truthMatched=None, band=No
                                            simTag = 'mag_auto', truthTag = 'mag')
         print "   fitting likelihood to largest PCA components..."
         Lpca, thisCoeff = lfunc.doLikelihoodPCAfit(pcaComp = pcaBasis,
-                                                likelihood = Lraw, 
-                                                n_component = n_component, 
-                                                Lcut = 1e-3)
+                                                                   likelihood = Lraw,
+                                                                   n_component = n_component,
+                                                                   Lcut = 1e-3, Ntot = thisSim.size)
         print "   performing regularized inversion..."
         this_recon, this_err , _ = lfunc.doInference(catalog = thisDES, likelihood = Lpca, 
                                                      obs_bins=obs_bins, truth_bins = truth_bins,
@@ -164,7 +164,7 @@ def populateMap(catalog = None, sim=None, truth=None, truthMatched=None, band=No
 def globalReconstructionPlots(des = None, likelihood = None, obs_bins = None, truth_bins= None,
                          obsTag= 'mag_auto', truthTag = 'mag', truth = None, band = None):
     N_mcmc, errMCMC , _ = lfunc.doInference(catalog = des, likelihood = likelihood,
-                                         obs_bins=obs_bins, truth_bins = truth_bins, invType = 'mcmc')
+                                         obs_bins=obs_bins, truth_bins = truth_bins, invType = 'basic')
     N_direct,errDirect, _  = lfunc.doInference(catalog = des, likelihood = likelihood,
                                          obs_bins=obs_bins, truth_bins = truth_bins, invType = 'tikhonov')
     N_obs, _ = np.histogram( des[obsTag], bins = obs_bins )
@@ -178,7 +178,7 @@ def globalReconstructionPlots(des = None, likelihood = None, obs_bins = None, tr
     obs_bin_centers   = ( obs_bins[0:-1]   + obs_bins[1:]   ) / 2.
     truth_bin_centers = ( truth_bins[0:-1] + truth_bins[1:] ) / 2.
     fig, ax = plt.subplots()
-    ax.errorbar(truth_bin_centers, N_mcmc, errMCMC , label = 'reconstr.')
+    ax.errorbar(truth_bin_centers, N_mcmc, errMCMC , label = 'pinv')
     ax.errorbar(truth_bin_centers, N_direct, errDirect , label = 'tikh')    
     ax.plot(truth_bin_centers, N_truth, label = 'truth')
     ax.plot(obs_bin_centers, N_obs, label = 'obs')
@@ -217,6 +217,9 @@ def main(argv):
     # Find the pca components for the chosen HEALPixelization.
     obsBins = lfunc.chooseBins(des,tag='mag_auto', binsize = 0.5)
     truthBins = lfunc.chooseBins(truth,tag='mag', binsize=0.5)
+
+
+    
     print "Building master matrix"
     LmasterRaw = lfunc.makeLikelihoodMatrix( sim=sim, truth=truth, truthMatched =truthMatched, Lcut = 0.,
                           obs_bins = obsBins, truth_bins = truthBins, simTag = 'mag_auto', truthTag = 'mag')

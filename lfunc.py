@@ -27,6 +27,7 @@ def chooseBins(catalog = None, tag=None, binsize = None, upperLimit = None, lowe
     return bins
 
 
+        
 def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., ncut = 0.,
                           obs_bins = None, truth_bins = None, simTag = None, truthTag = None):
     obs_bin_index = np.digitize(sim[simTag], obs_bins) - 1
@@ -167,7 +168,7 @@ def likelihoodPCA(likelihood= None,  doplot = False, band = None,
       
     return likelihood_pcomp, s
 
-def doLikelihoodPCAfit(pcaComp = None,  likelihood =None, n_component = 5, Lcut = 0.):
+def doLikelihoodPCAfit(pcaComp = None,  likelihood =None, n_component = 5, Lcut = 0., Ntot = 1e5):
 
     # Perform least-squares: Find the best combination of pcaComps[:,:,0:n_component] that fits likelihood
     origShape = likelihood.shape
@@ -176,12 +177,21 @@ def doLikelihoodPCAfit(pcaComp = None,  likelihood =None, n_component = 5, Lcut 
     pca1d = pcaComp.reshape( ( likelihood.size, pcaComp.shape[-1]) )
     pcafit = pca1d[:,0:(n_component)]
 
+    # Full least-squares, taking the covariances of the likelihood into account.
+    # covar(L1d) = Ntot * np.outer( L1d, L1d)
+    # in the solution, the scaling Ntot falls out. However, we do need it for getting the errors later.
+    L1dCovar = Ntot * np.outer(L1d, L1d)
+    #aa= np.linalg.pinv( np.dot( pcafit.T, np.dot(L1dCovar, pcafit)) )
+    #bb =  np.dot(pcafit.T, L1dCovar)
+    #coeff = np.dot( np.dot(aa,bb), L1d)
+    #coeffCovar = aa
+    
     coeff, resid, _, _  = np.linalg.lstsq(pcafit, L1d)
     bestFit = np.dot(pcafit,coeff)
     bestFit2d = bestFit.reshape(likelihood.shape)
     bestFit2d[bestFit2d < Lcut] = 0.
     
-    return bestFit2d, coeff
+    return bestFit2d, coeff#, coeffCovar
 
 def mcmcLogL(N_truth, N_data, likelihood, lninf=-1000):
     if np.sum(N_truth < 0.) > 0:
@@ -234,8 +244,9 @@ def initializeMCMC(N_data, likelihood, multiplier = 1.):
     return start, nWalkers
 
 
+
 def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = None, tag = 'mag_auto',
-                invType = 'basic', lambda_reg = 1e-6, prior = None):
+                invType = 'basic', lambda_reg = 1e-6, prior = None, coeffCovar = None, pcaBasis = None):
 
     if prior is None:
         prior = np.zeros(truth_bins.size-1)
@@ -243,14 +254,15 @@ def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = N
     N_real_obs, _  = np.histogram(catalog[tag], bins = obs_bins)
     N_real_obs = N_real_obs*1.0
     A = likelihood.copy()
+    
     if invType is 'basic':
         Ainv = np.linalg.pinv(A,rcond = lambda_reg)
         N_real_truth = np.dot(Ainv, N_real_obs - np.dot(A, prior)) + prior
         covar_truth = np.diag(N_real_truth)
         Areg = np.dot(Ainv, A)
         covar_recon = np.dot( np.dot(Areg, covar_truth), Areg.T)
-        leakage = np.abs(np.dot( Areg, N_real_truth) - N_real_truth)
-        errors = np.sqrt( np.diag(covar_recon) ) + leakage
+        leakage = np.abs(np.dot( Areg, N_real_truth) - N_real_truth)    
+        errors = np.sqrt( np.diag(covar_recon) ) + leakage 
 
     if invType is 'tikhonov':
         Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(truth_bins.size - 1 ) ), A.T)
@@ -259,7 +271,11 @@ def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = N
         Areg = np.dot(Ainv, A)
         covar_recon = np.dot( np.dot(Areg, covar_truth), Areg.T)
         leakage = np.abs(np.dot( Areg, N_real_truth) - N_real_truth)
-        errors = np.sqrt( np.diag(covar_recon) ) + leakage
+        aa = np.dot(A.T, A)
+        aainv = np.linalg.pinv(aa)
+        g = np.trace( lambda_reg * aainv)
+        reg_err = lambda_reg / (1 + g) * np.dot( np.dot( np.dot( aainv, aainv), A.T) , N_real_obs)        
+        errors = np.sqrt( np.diag(covar_recon) ) + leakage + np.abs(reg_err)
 
     if invType is 'mcmc':
         start, nWalkers = initializeMCMC(N_real_obs, A)
@@ -292,3 +308,58 @@ def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = N
 
     return N_real_truth, errors, truth_bins_centers
 
+def inference_nd(sim=None, truth=None, truthMatched=None, obs_bins=None, truth_bins = None,
+                 truth_tags = None, obs_tags = None,  lambda_reg = 1e-6, prior = None,
+                 pcaBasis = None, ncut = 0., Lcut = 0. ):
+    
+    # It's really important to make sure that everything is inside the bins. Otherwise, the edifice below will collapse.
+    Nbins_obs = [thing.size-1 for thing in obs_bins]
+    N_index_mult_obs = [1]
+    N_index_mult_obs.extend(Nbins_obs)
+    Nbins_truth = [thing.size-1 for thing in obs_bins]
+    N_index_mult_truth = [1]
+    N_index_mult_truth.extend(Nbins_truth)
+
+    obs_bin_indices_nd = []
+    truth_bin_indices_nd = []
+    obs_bin_indices = [N_index_mult_obs * (np.digitize(sim[obs_tags[i]], obs_bins[i] ) -1) for i in xrange(len(obs_tags) ) ]
+    truth_bin_indices = [N_index_mult_truth * ( np.digitize(sim[truth_tags[i]], truth_bins[i] ) - 1) for i in xrange(len(truth_tags) ) ]
+
+    L = np.zeros( (np.product(Nbins_obs), np.product(Nbins_truth) )
+    
+    for i in xrange(obs_bin_index.size):
+        if N_truth[truth_bin_index[i]] > ncut:
+            L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
+                                                        1./N_truth[truth_bin_index[i]] )
+    L[L < Lcut] = 0.
+
+    obsSample = [sim[tag] for tag  in obs_tags]
+    truthSample = [truth[tag] for tag in truth_tags]
+    N_obs   = np.histogramdd( obsSample,   bins = obs_bins )
+    N_truth = np.histogramdd( truthSample, bins = truth_bins)
+    origShapeTruth = N_truth.shape
+    
+    N_obs_1d = np.reshape(N_obs.copy(), N_obs.size)
+
+    
+    Lpca, _ = doLikelihoodPCAfit(pcaComp = pcaBasis,  likelihood = L, n_component = 6, Lcut = 0., Ntot = sim.size)
+    Linv = np.dot( np.linalg.pinv(np.dot(Lpca.T, Lpca) + lambda_reg * np.identity(truth_bins.size - 1 ) ), Lpca.T)
+
+    prior_1d = np.reshape(prior.copy(), prior.size) 
+    N_est_1d = np.dot(Linv, N_real_obs - np.dot(Lpca, prior_1d)) + prior_1d
+    N_est_nd = np.reshape(N_est_1d.copy(), origShapeTruth)
+    
+    # Now calculate errors.
+    covar_truth = np.diag(N_est_1d)
+    Lreg = np.dot(Linv, Lpca)
+    covar_recon = np.dot( np.dot(Areg, covar_truth), Areg.T)
+    leakage = np.abs(np.dot( Lreg, N_est_1d) - N_est_1d)
+    LL = np.dot(L.T, L)
+    LLinv = np.linalg.pinv(LL)
+    g = np.trace( lambda_reg * LLinv)
+    reg_err = lambda_reg / (1 + g) * np.dot( np.dot( np.dot( LLinv, LLinv), L.T) , N_est_1d)        
+    errors = np.sqrt( np.diag(covar_recon) ) + leakage + np.abs(reg_err)
+
+    errors_nd = np.reshape(errors.copy(), origShapeTruth)
+
+    return N_est_nd, errors_nd

@@ -207,7 +207,7 @@ def mergeCatalogsUsingPandas(sim=None, truth=None, key='balrog_index', suffixes 
 
 
 
-def GetFromDB( band='i', depth = 0.0,tables =['sva1v2','sva1v3','sva1v3_2']): 
+def GetFromDB( band='i', depth = 0.0,tables =['sva1v2','sva1v3','sva1v3_2','sva1v3_3']): 
     depthfile = '../../Data/sva1_gold_1.0.2-4_nside4096_nest_i_auto_weights.fits'
 
     cur = desdb.connect()
