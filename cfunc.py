@@ -18,7 +18,6 @@ def GetDepthMap(depth_file):
     nside = hp.npix2nside(map.size)
     return map, nside
 
-
 def GetPhi(ra):
     return ra * np.pi / 180.0
 
@@ -295,21 +294,26 @@ def getHealConfig(map_nside = 4096, out_nside = 128, depthfile = '../../Data/sva
     return HealConfig
 
 
-def getGoodRegionIndices(catalog=None, badHPInds=None, nside=4096):
-    hpInd = hpRaDecToHEALPixel(catalog['ra'], catalog['dec'], nside=nside, nest= True)
+def getGoodRegionIndices(catalog=None, badHPInds=None, nside=4096,band=None, raTag = 'ra', decTag = 'dec'):
+    hpInd = hpRaDecToHEALPixel(catalog[raTag], catalog[decTag], nside=nside, nest= True)
     keep = ~np.in1d(hpInd, badHPInds)
     return keep
 
 
-def excludeBadRegions(des,balrogObs, balrogTruthMatched, balrogTruth, band='i'):
+def excludeBadRegions(des,balrogObs, balrogTruthMatched, balrogTruth, band=None):
     eliMap = hp.read_map("sva1_gold_1.0.4_goodregions_04_equ_nest_4096.fits", nest=True)
     nside = hp.npix2nside(eliMap.size)
     maskIndices = np.arange(eliMap.size)
     badIndices = maskIndices[eliMap == 1]
-
-    obsKeepIndices = getGoodRegionIndices(catalog=balrogObs, badHPInds=badIndices, nside=nside)
-    truthKeepIndices = getGoodRegionIndices(catalog=balrogTruth, badHPInds=badIndices, nside=nside)
-    desKeepIndices = getGoodRegionIndices(catalog=des, badHPInds=badIndices, nside=nside)
+    if band is not None:
+        raTag = 'ra_'+band
+        decTag = 'dec_'+band
+    else:
+        raTag = 'ra'
+        decTag = 'dec'
+    obsKeepIndices = getGoodRegionIndices(catalog=balrogObs, badHPInds=badIndices, nside=nside, raTag = raTag, decTag = decTag)
+    truthKeepIndices = getGoodRegionIndices(catalog=balrogTruth, badHPInds=badIndices, nside=nside, raTag = raTag, decTag = decTag)
+    desKeepIndices = getGoodRegionIndices(catalog=des, badHPInds=badIndices, nside=nside, raTag = raTag, decTag = decTag)
 
     balrogObs = balrogObs[obsKeepIndices]
     balrogTruthMatched = balrogTruthMatched[obsKeepIndices]
@@ -319,13 +323,13 @@ def excludeBadRegions(des,balrogObs, balrogTruthMatched, balrogTruth, band='i'):
     return des,balrogObs, balrogTruthMatched, balrogTruth
 
 
-def removeNeighbors(thing1, thing2, radius= 2./3600):
+def removeNeighbors(thing1, thing2, radius= 2./3600,
+                    raTag1 = 'ra', decTag1 = 'dec', raTag2 = 'ra', decTag2 = 'dec'):
     # Returns the elements of thing 1 that are outside of the matching radius from thing 2
     
     depth=10
     h = esutil.htm.HTM(depth)
-    m1, m2, d12 = h.match(thing1['ra'],thing1['dec'],thing2['ra'],thing2['dec'],radius,maxmatch=0)
-
+    m1, m2, d12 = h.match(thing1[raTag1],thing1[decTag1],thing2[raTag2],thing2[decTag2],radius,maxmatch=0)
     keep = ~np.in1d(thing1['balrog_index'],thing1['balrog_index'][m1])
     return keep
 
@@ -361,6 +365,23 @@ def getCatalogs(reload=False,band='i', path = '../../Data/'):
     return desCat, BalrogObs, BalrogTruthMatched, BalrogTruth, BalrogTileInfo
 
 
+def modestify(data):
+    modest = np.zeros(len(data), dtype=np.int32)
+
+    galcut = (data['flags'] <=3) & -( ((data['class_star'] > 0.3) & (data['mag_auto'] < 18.0)) | ((data['spread_model'] + 3*data['spreaderr_model']) < 0.003) | ((data['mag_psf'] > 30.0) & (data['mag_auto'] < 21.0)))
+    modest[galcut] = 1
+
+    starcut = (data['flags'] <=3) & ((data['class_star'] > 0.3) & (data['mag_auto'] < 18.0) & (data['mag_psf'] < 30.0) | (((data['spread_model'] + 3*data['spreaderr_model']) < 0.003) & ((data['spread_model'] +3*data['spreaderr_model']) > -0.003)))
+    modest[starcut] = 3
+
+    neither = -(galcut | starcut)
+    modest[neither] = 5
+
+    data = rf.append_fields(data, 'modtype', modest)
+    print len(data), np.sum(galcut), np.sum(starcut), np.sum(neither)
+    return data
+
+
 def getCleanCatalogs( reload = False, band=None, isolated=False, nside=None):
     
     if band is None:
@@ -371,7 +392,7 @@ def getCleanCatalogs( reload = False, band=None, isolated=False, nside=None):
     des, balrogObs, balrogTruthMatched, balrogTruth, balrogTileInfo = getCatalogs(reload=reload, band=band)
 
     # Remove things in regions that are officially masked.
-    des, balrogObs, balrogTruthMatched, balrogTruth = excludeBadRegions(des,balrogObs, balrogTruthMatched, balrogTruth, band=band)
+    des, balrogObs, balrogTruthMatched, balrogTruth = excludeBadRegions(des,balrogObs, balrogTruthMatched, balrogTruth)
     
     # if the isolated keyword is set, exclude things within some
     # separation from a pre-existing DES detection.
@@ -392,3 +413,17 @@ def getCleanCatalogs( reload = False, band=None, isolated=False, nside=None):
         return des, balrogObs, balrogTruthMatched, balrogTruth,HEALConfig
     else:
         return des, balrogObs, balrogTruthMatched, balrogTruth
+
+def matchCatalogs(cat1, cat2 ,tag = 'balrog_index'):
+    ind1, ind2 = esutil.numpy_util.match(cat1[tag], cat2[tag])
+    return cat1[ind1], cat2[ind2]
+    
+def getStellarityCatalogs( reload = False, band = None, nside = None):
+    
+    des1, balrogObs1, balrogTruthMatched1, balrogTruth1 = getCleanCatalogs(reload=False,band=band)
+    des = modestify(des)
+    balrogObs = modestify(balrogObs)
+    balrogTruthMatched = modestify(balrogTruthMatched)
+    balrogTruth = modestify(balrogTruth)
+
+    return des, balrogObs, balrogTruthMatched, balrogTruth

@@ -255,7 +255,7 @@ def modestify(data, band='i'):
 
 
 
-def getCatalogs(reload=False, band1 = 'g', band2 = 'i'):
+def getMultiBandCatalogs(reload=False, band1 = 'g', band2 = 'i'):
 
     
     des1, balrogObs1, balrogTruthMatched1, balrogTruth1, balrogTileInfo = getSingleFilterCatalogs(reload=reload, band=band1)
@@ -276,7 +276,7 @@ def getCatalogs(reload=False, band1 = 'g', band2 = 'i'):
     balrogTruthMatched = modestify(balrogTruthMatched,band=band1)
     balrogTruthMatched = modestify(balrogTruthMatched,band=band2)
 
-
+    
     # Finally, add colors.
     des = rf.append_fields(des, 'color_%s_%s'%(band1,band2), ( des['mag_auto_'+band1] - des['mag_auto_'+band2] ) )
     balrogObs = rf.append_fields(balrogObs, 'color_%s_%s'%(band1,band2), ( balrogObs['mag_auto_'+band1] - balrogObs['mag_auto_'+band2] ) )

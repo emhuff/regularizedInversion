@@ -10,7 +10,7 @@ import mapfunc
 import sys
 import numpy as np
 import healpy as hp
-
+import esutil
 
 def makeMapPolygons(theMap = None, N_recon = None, N_recon_err=None, N_raw = None,
                        bin_centers = None, HEALConfig = None, vmin = -2., vmax = 2.):
@@ -84,7 +84,7 @@ def mapHistogramPlots(theMap =None,poly = None, N_recon = None, N_recon_err=None
 
 def populateMap(catalog = None, sim=None, truth=None, truthMatched=None, band=None,
                 HEALConfig = None, pcaBasis = None, obs_bins = None, truth_bins = None,
-                magrange =[22.5,24.0], doplot = False, n_component = 4, prior = None):
+                magrange =[22.5,24.], doplot = False, n_component = 4, prior = None):
     useInds = np.unique(catalog['HEALIndex'])
     mapIndices = np.arange(hp.nside2npix(HEALConfig['out_nside']))
     theMap = np.zeros(mapIndices.size) + hp.UNSEEN
@@ -128,17 +128,18 @@ def populateMap(catalog = None, sim=None, truth=None, truthMatched=None, band=No
                                                                    n_component = n_component,
                                                                    Lcut = 1e-3, Ntot = thisSim.size)
         print "   performing regularized inversion..."
+        scaledPrior = prior * thisTruth.size
         this_recon, this_err , _ = lfunc.doInference(catalog = thisDES, likelihood = Lpca, 
                                                      obs_bins=obs_bins, truth_bins = truth_bins,
                                                      lambda_reg = 1e-2, invType = 'tikhonov',
-                                                     prior = prior)
-
+                                                     prior = scaledPrior, priorNumber = sim.size)
+    
     
         pcaRecon[:, i] = this_recon.copy() * 1./(thisTruth.size)
         pcaReconErr[:,i] = this_err.copy() * 1./(thisTruth.size)
         coeff[:,i] = thisCoeff
-        
-        theMap[hpInd] = np.sum(this_recon[truth_bin_indices]) * 1. / (thisTruth.size)
+        wt = 1./this_err[truth_bin_indices]**2
+        theMap[hpInd] = np.sum(this_recon[truth_bin_indices] * wt) / np.sum(wt) * 1. / (thisTruth.size)
         theMapErr[hpInd] = np.sqrt(np.sum(this_err[truth_bin_indices]**2)) * 1./thisTruth.size
 
         N_obs,_ = np.histogram(thisDES['mag_auto'], bins=truth_bins)
@@ -154,9 +155,9 @@ def populateMap(catalog = None, sim=None, truth=None, truthMatched=None, band=No
     print "Making map polygons"
     poly, vertices = makeMapPolygons(theMap = theMap, N_recon = pcaRecon, N_recon_err=pcaReconErr, N_raw = rawRecon,
                            bin_centers = truth_bin_centers, HEALConfig = HEALConfig, vmin = -2., vmax = 2.)
-    print "Building combined map+histogram plots"
-    mapHistogramPlots(poly = poly, theMap = theMap, N_recon = pcaRecon, N_recon_err=pcaReconErr, N_raw = rawRecon, band=band,
-                       bin_centers = truth_bin_centers, HEALConfig = HEALConfig, vertices=vertices, N_truth = N_truth,catalog=sample)
+    #print "Building combined map+histogram plots"
+    #mapHistogramPlots(poly = poly, theMap = theMap, N_recon = pcaRecon, N_recon_err=pcaReconErr, N_raw = rawRecon, band=band,
+    #                   bin_centers = truth_bin_centers, HEALConfig = HEALConfig, vertices=vertices, N_truth = N_truth,catalog=sample)
     
     return theMap, theMapObs, coeff
 
@@ -238,14 +239,14 @@ def main(argv):
                                                                                               healConfig=HEALConfig,
                                                                                               obs_bins = obsBins, truth_bins = truthBins,
                                                                                               ncut = 0.,
-                                                                                              doplot = False)
+                                                                                              doplot = True)
 
     truth_bin_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
     obs_bin_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
     extent= [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]]
     
     print "Finding pca components from HEALPixel stack."
-    Lpca, pcaEigen = lfunc.likelihoodPCA(likelihood = Likelihoods, doplot=False, 
+    Lpca, pcaEigen = lfunc.likelihoodPCA(likelihood = Likelihoods, doplot=True, 
                                          band=band, extent = extent)
     print "Re-fitting primary principal components to master likelihood"
     LmasterPCA, coeffMaster = lfunc.doLikelihoodPCAfit(pcaComp = Lpca,
@@ -274,6 +275,7 @@ def main(argv):
     truthMatched = cfunc.HealPixifyCatalogs(catalog=truthMatched, healConfig=HEALConfig, ratag='ra', dectag = 'dec')
     
     print "Populating maps with HEALPixel reconstructions"
+
     theMap, theMapObs, coeff = populateMap(catalog = des, sim=sim, truth=truth, truthMatched=truthMatched,
                                            HEALConfig = HEALConfig, pcaBasis = Lpca, obs_bins = obsBins,
                                            prior = N_prior_tik,
@@ -301,8 +303,39 @@ def main(argv):
     deltaMapObs = theMapObs.copy()
     deltaMapObs[seen] = theMapObs[seen]/np.median(theMapObs[seen]) - 1.
     mapfunc.visualizeHealPixMap(deltaMapObs, nest=True, title="mapObsDelta-"+band, vmin = -1., vmax = 1.)
+    fig, ax = plt.subplots()
+    ax.hist(deltaMap[seen & np.isfinite(deltaMap)],bins=100)
+    ax.set_xlabel('pca map overdensity')
+    ax.set_ylabel('Number of HEALPixels')
+    fig.savefig("pca-mapRecon-hist-"+band+".png")
+    print "Making maps of pca 0 and 1"
+    coeff0Map = np.zeros(theMap.size) + hp.UNSEEN
+    coeff1Map = np.zeros(theMap.size) + hp.UNSEEN
+    coeff2Map = np.zeros(theMap.size) + hp.UNSEEN
+    coeff3Map = np.zeros(theMap.size) + hp.UNSEEN
+    coeff0Map[seen] = coeff[0,:]
+    coeff1Map[seen] = coeff[1,:]
+    coeff2Map[seen] = coeff[2,:]
+    coeff3Map[seen] = coeff[3,:]
+    mapfunc.visualizeHealPixMap(coeff0Map, nest=True, title='pca0-'+band)
+    mapfunc.visualizeHealPixMap(coeff1Map, nest=True, title='pca1-'+band)
+    mapfunc.visualizeHealPixMap(coeff2Map, nest=True, title='pca2-'+band)
+    mapfunc.visualizeHealPixMap(coeff3Map, nest=True, title='pca3-'+band)
+
+    fig, ax = plt.subplots()
+    ax.plot(coeff0Map[seen]-np.mean(coeff0Map[seen]), deltaMap[seen],'.',label='PC0')
+    ax.plot(coeff1Map[seen]-np.mean(coeff1Map[seen]), deltaMap[seen],'.',label='PC1',alpha=0.6)
+    ax.plot(coeff2Map[seen]-np.mean(coeff2Map[seen]), deltaMap[seen],'.',label='PC2', alpha=0.3)
+    ax.plot(coeff3Map[seen]-np.mean(coeff3Map[seen]), deltaMap[seen],'.',label='PC3', alpha = 0.25)
+    ax.legend(loc='best')
+    fig.savefig('pca-density-'+band+'.png')
     print "Done."
 
+    esutil.io.write('pca-mapRecon-'+band+'.fits',theMap)
+    esutil.io.write('mapObs-i'+band+'.fits',theMapObs)
+    # Wouldn't it be cool to compare to IRAS, WISE, or other similar maps for external validation?
+    #wise = hp.read_map('../../Data/WISE/wssa_sample_1024.fits')
+    #stop
 
 if __name__ == "__main__":
     import pdb, traceback
