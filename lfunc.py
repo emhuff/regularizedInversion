@@ -56,9 +56,9 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., 
         #Assume that truth_bins and obs_bins are indexable.
         truth_bin_index = np.digitize(truthMatched[truthTag[0]], truth_bins[0]) - 1
         obs_bin_index = np.digitize(sim[simTag[0]], obs_bins[0]) - 1
-
-        good = ((truth_bin_index > 0) & (truth_bin_index < nbins_truth) &
-                (obs_bin_index   > 0) & (obs_bin_index   < nbins_obs) )
+        
+        good = ((truth_bin_index > 0) & (truth_bin_index < (len(truth_bins[i+1]) - 1)) &
+                (obs_bin_index   > 0) & (obs_bin_index   < (len(obs_bins[i+1]) -1)) )
         # --------------------------------------------------
         # Fancy multi-dimensional indexing.
         for i in xrange(len(truthTag) -1 ):

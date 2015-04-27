@@ -187,8 +187,8 @@ def main(argv):
     plt.plot(in_var, out_var,',')
     plt.show()
     L = lfunc.makeLikelihoodMatrix(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
-                                     obs_bins = obsBins, truth_bins = reconBins, simTags = ['mag','stellarity'],
-                                     truthTags = ['mag', 'stellarity'])
+                                     obs_bins = obsBins, truth_bins = reconBins, simTag = ['mag','stellarity'],
+                                     truthTag = ['mag', 'stellarity'])
     #stop
     plt.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
     plt.show()
