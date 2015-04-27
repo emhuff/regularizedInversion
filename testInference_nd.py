@@ -180,18 +180,42 @@ def main(argv):
     reconBins = [truthMagBins, starBins]
     obsBins = [obsMagBins, starBins]
 
-    #fig, ax = plt.subplots()
+    fig, (ax1, ax2) = plt.subplots(nrows = 1, ncols = 2, figsize = (14,7))
     in_var = truthMatched['mag'] + 1.01*np.max(truthMatched['mag']) * truthMatched['stellarity']
     out_var = catalog_sim_obs['mag'] + 1.01*np.max(catalog_sim_obs['mag']) * catalog_sim_obs['stellarity']
-    plt.plot(in_var, out_var,',')
-    plt.show()
+    ax1.plot(in_var, out_var,',')
+    ax1.set_xlabel('truth mag/stellarity')
+    ax1.set_ylabel('obs mag/stellarity')
+
     L = lfunc.makeLikelihoodMatrix(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
                                      obs_bins = obsBins, truth_bins = reconBins, simTag = ['mag','stellarity'],
                                      truthTag = ['mag', 'stellarity'])
-    #stop
-    plt.imshow(np.arcsinh(L/0.00001), origin='lower', cmap=plt.cm.Greys)
+    ax2.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    ax2.set_xlabel('truth mag/stellarity')
+    ax2.set_ylabel('obs mag/stellarity')
+    fig.savefig("nd-likelihood_test-mag_stellarity.png")
+    plt.show()
+
+    # --------------------------------------------------
+
+    obsMagBins = np.linspace(15,23,20)
+    truthMagBins = np.linspace(15,25,25)
+    obsSizeBins = np.linspace(0, 2, 20)
+    truthSizeBins = np.linspace(0,2,20)
+    reconBins = [truthMagBins, truthSizeBins]
+    obsBins = [obsMagBins, obsSizeBins]
+
+    fig, ax2 = plt.subplots(nrows = 1, ncols = 1)
+    L = lfunc.makeLikelihoodMatrix(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
+                                     obs_bins = obsBins, truth_bins = reconBins, simTag = ['mag','size'],
+                                     truthTag = ['mag', 'size'])
+    ax2.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    ax2.set_xlabel('truth mag/size')
+    ax2.set_ylabel('obs mag/size')
+    fig.savefig("nd-likelihood_test-mag_size.png")
     plt.show()
     stop
+    
     
 
 if __name__ == "__main__":
