@@ -4,7 +4,6 @@ import matplotlib as mpl
 
 import argparse
 import matplotlib.pyplot as plt
-import cfunc
 import lfunc
 import mapfunc
 import sys
@@ -177,7 +176,7 @@ def main(argv):
     catalog_sim_obs = catalog_sim_obs[ind2]
     obsMagBins = np.linspace(15,23,20)
     truthMagBins = np.linspace(15,25,25)
-    starBins = np.array([0, 0.5, 1])
+    starBins = np.array([-1, 0.5, 2])
     reconBins = [truthMagBins, starBins]
     obsBins = [obsMagBins, starBins]
 
@@ -190,9 +189,9 @@ def main(argv):
                                      obs_bins = obsBins, truth_bins = reconBins, simTag = ['mag','stellarity'],
                                      truthTag = ['mag', 'stellarity'])
     #stop
-    plt.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    plt.imshow(np.arcsinh(L/0.00001), origin='lower', cmap=plt.cm.Greys)
     plt.show()
-
+    stop
     
 
 if __name__ == "__main__":

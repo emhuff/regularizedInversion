@@ -52,25 +52,32 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., 
         # In this case, the user has asked us to make a likelihood
         # matrix that maps an n-dimensional space onto another
         # n-dimensional space.
+        nbins_truth =  np.product( [len(x)-1 for x in truth_bins] )
+        nbins_obs =  np.product( [len(x)-1 for x in obs_bins] )
+        
         # --------------------------------------------------
         #Assume that truth_bins and obs_bins are indexable.
         truth_bin_index = np.digitize(truthMatched[truthTag[0]], truth_bins[0]) - 1
         obs_bin_index = np.digitize(sim[simTag[0]], obs_bins[0]) - 1
         
-        good = ((truth_bin_index > 0) & (truth_bin_index < (len(truth_bins[i+1]) - 1)) &
-                (obs_bin_index   > 0) & (obs_bin_index   < (len(obs_bins[i+1]) -1)) )
+        good = ((truth_bin_index >= 0) & (truth_bin_index < (len(truth_bins[0]) - 1)) &
+                (obs_bin_index   >= 0) & (obs_bin_index   < (len(obs_bins[0]) -1)) )
+
         # --------------------------------------------------
         # Fancy multi-dimensional indexing.
         for i in xrange(len(truthTag) -1 ):
-            this_truth_bin_index = np.digitize( truthMatched[truthTag[i+1]], truth_bins[i+1])
-            this_obs_bin_index = np.digitize( truthMatched[truthTag[i+1]], obs_bins[i+1])
-            good = good & ( (this_truth_bin_index > 0) & (truth_bin_index < (len(truth_bins[i+1]) - 1)) &
-                            (this_obs_bin_index   > 0) & (obs_bin_index   < (len(obs_bins[i+1]) -1) ) )
-            
+            this_truth_bin_index = np.digitize( truthMatched[truthTag[i+1]], truth_bins[i+1]) -1
+            this_obs_bin_index = np.digitize( sim[simTag[i+1]], obs_bins[i+1]) -1
+            good =  good & ( (this_truth_bin_index >= 0) & (this_truth_bin_index < (len(truth_bins[i+1]) - 1)) &
+                                (this_obs_bin_index   >= 0) & (this_obs_bin_index   < (len(obs_bins[i+1]) -1) ) )
             truth_bin_index = truth_bin_index + (len(truth_bins[i])-1) * this_truth_bin_index
             obs_bin_index = obs_bin_index + (len(obs_bins[i])-1) * this_obs_bin_index
         # --------------------------------------------------
+        truth_bin_index = truth_bin_index[good]
+        obs_bin_index = obs_bin_index[good]
+        
         N_truth = np.bincount(truth_bin_index)
+        L = np.zeros( (nbins_obs, nbins_truth) )
         for i in xrange(obs_bin_index.size):
             if N_truth[truth_bin_index[i]] > ncut:
                 L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
