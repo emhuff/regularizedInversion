@@ -8,7 +8,7 @@ import healpy as hp
 
 import matplotlib.pyplot as plt
 from scipy.special import gammaln
-
+import numpy.lib.recfunctions as recfunctions
 import emcee
 
 
@@ -54,9 +54,9 @@ def makeLikelihoodMatrixND(sim=None, truth=None, truthMatched = None, Lcut = 0.,
 
     NObsBins = 1
     SingleDimBinSize = []
-    for i in range(len(obsTags)):
+    for i in range(len(simTags)):
         NObsBins = NObsBins * (len(obs_bins[i]) - 1)
-        SingleDimBinSize.append( np.diff(obsBins[i]) )
+        SingleDimBinSize.append( np.diff(obs_bins[i]) )
     BinVolume = 1.0
     inc = 0
     for i in range(len(SingleDimBinSize)):
@@ -66,16 +66,16 @@ def makeLikelihoodMatrixND(sim=None, truth=None, truthMatched = None, Lcut = 0.,
 
     Likelihood = np.zeros( (NObsBins,NTruthBins) )
     for i in range(len(BalrogByTruthIndex)):
-        ThisTruth = np.zeros( (len(BalrogByTruthIndex[i]), len(obsTags)) )
+        ThisTruth = np.zeros( (len(BalrogByTruthIndex[i]), len(simTags)) )
             
         if len(BalrogByTruthIndex[i])==0:
             continue
             
-        for j in range(len(obsTags)):
-            ThisTruth[:,j] = (BalrogByTruthIndex[i][obsTags[j]])
+        for j in range(len(simTags)):
+            ThisTruth[:,j] = (BalrogByTruthIndex[i][simTags[j]])
 
         hist, edge = np.histogramdd(ThisTruth, bins=obs_bins)
-        nhist = hist / len(ThisTruth)
+        nhist = hist* 1. / len(ThisTruth)
         NObserved[i] = len(ThisTruth)
         hist1d = nhist.flatten()
         Likelihood[:, i] = hist1d
@@ -85,24 +85,28 @@ def makeLikelihoodMatrixND(sim=None, truth=None, truthMatched = None, Lcut = 0.,
         
 def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., ncut = 0.,
                           obs_bins = None, truth_bins = None, simTag = None, truthTag = None):
-    obs_bin_index = np.digitize(sim[simTag], obs_bins) - 1
-    truth_bin_index = np.digitize(truthMatched[truthTag], truth_bins) - 1
-    # Limit loop to objects in the given bin ranges.
-    nbins_truth = truth_bins.size -1
-    nbins_obs = obs_bins.size - 1
-    good = ((truth_bin_index > 0) & (truth_bin_index < nbins_truth) &
-            (obs_bin_index   > 0) & (obs_bin_index   < nbins_obs) )
-    obs_bin_index = obs_bin_index[good]
-    truth_bin_index = truth_bin_index[good]
-    N_truth, _ = np.histogram( truth[truthTag], bins=truth_bins )
+    if ( len(simTag) == 1 ) and (len(truthTag) == 1 ):
+        obs_bin_index = np.digitize(sim[simTag], obs_bins) - 1
+        truth_bin_index = np.digitize(truthMatched[truthTag], truth_bins) - 1
+        # Limit loop to objects in the given bin ranges.
+        nbins_truth = truth_bins.size -1
+        nbins_obs = obs_bins.size - 1
+        good = ((truth_bin_index > 0) & (truth_bin_index < nbins_truth) &
+                (obs_bin_index   > 0) & (obs_bin_index   < nbins_obs) )
+        obs_bin_index = obs_bin_index[good]
+        truth_bin_index = truth_bin_index[good]
+        N_truth, _ = np.histogram( truth[truthTag], bins=truth_bins )
 
-    L = np.zeros( (nbins_obs, nbins_truth) )
+        L = np.zeros( (nbins_obs, nbins_truth) )
     
-    for i in xrange(obs_bin_index.size):
-        if N_truth[truth_bin_index[i]] > ncut:
-            L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
-                                                        1./N_truth[truth_bin_index[i]] )
-    L[L < Lcut] = 0.
+        for i in xrange(obs_bin_index.size):
+            if N_truth[truth_bin_index[i]] > ncut:
+                L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
+                                                            1./N_truth[truth_bin_index[i]] )
+        L[L < Lcut] = 0.
+    else:
+        pass
+        
     return L
     
 

@@ -152,22 +152,48 @@ def main(argv):
     catalog_sim_obs = applyTransferFunction(catalog_sim_truth, psf_size = psf_size)
 
     ind1, ind2 = esutil.numpy_util.match(catalog_sim_truth['balrog_index'],catalog_sim_obs['balrog_index'])
-    #plt.plot(catalog_sim_obs['size'], catalog_sim_obs['mag'],',',color='blue')
-    #plt.axvline(psf_size,linestyle='--',color='red')
-    #plt.gca().invert_yaxis()
-    #plt.show()
+    '''
+    plt.plot(catalog_sim_obs['size'], catalog_sim_obs['mag'],',',color='blue')
+    plt.axvline(psf_size,linestyle='--',color='red')
+    plt.gca().invert_yaxis()
+    plt.show()
     
     bins = np.linspace( 0.3,1.0, 300)
     plt.hist(catalog_sim_obs['size'],bins=bins,color='blue',label='all')
-    plt.hist(catalog_sim_obs[catalog_sim_obs['stellarity'] == 0]['size'],bins=bins,color='yellow',label='galaxies',alpha=0.33)
-    plt.hist(catalog_sim_obs[catalog_sim_obs['stellarity'] == 1]['size'],bins=bins,color='orange',label='stars',alpha=0.25)
+    plt.hist(catalog_sim_obs[catalog_sim_obs['stellarity'] == 0]['size'],bins=bins,color='yellow',label='galaxies',alpha=0.5)
+    plt.hist(catalog_sim_obs[catalog_sim_obs['stellarity'] == 1]['size'],bins=bins,color='orange',label='stars',alpha=0.5)
     plt.axvline(psf_size*1.04,linestyle='--',color='red')
     plt.xlim([0.33,1.0])
     plt.legend(loc='best')
     plt.show()
-    stop
+    '''
+    
+    obsStar = catalog_sim_obs['size'] <= psf_size * 1.04
+    obsGal  = catalog_sim_obs['size'] >  psf_size * 1.04
+    catalog_sim_obs['stellarity'][obsStar] = 1
+    catalog_sim_obs['stellarity'][obsGal] = 0
 
+    truthMatched = catalog_sim_truth[ind1].copy()
+    catalog_sim_obs = catalog_sim_obs[ind2]
+    obsMagBins = np.linspace(15,23,20)
+    truthMagBins = np.linspace(15,25,25)
+    starBins = np.array([0, 0.5, 1])
+    reconBins = [truthMagBins, starBins]
+    obsBins = [obsMagBins, starBins]
 
+    #fig, ax = plt.subplots()
+    in_var = truthMatched['mag'] + 1.01*np.max(truthMatched['mag']) * truthMatched['stellarity']
+    out_var = catalog_sim_obs['mag'] + 1.01*np.max(catalog_sim_obs['mag']) * catalog_sim_obs['stellarity']
+    plt.plot(in_var, out_var,',')
+    plt.show()
+    #L = lfunc.makeLikelihoodMatrixND(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
+    #                                 obs_bins = obsBins, truth_bins = reconBins, simTags = ['mag','stellarity'],
+    #                                 truthTags = ['mag', 'stellarity'])
+    #stop
+    #plt.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    #plt.show()
+
+    
 
 if __name__ == "__main__":
     import pdb, traceback
