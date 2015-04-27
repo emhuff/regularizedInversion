@@ -186,12 +186,12 @@ def main(argv):
     out_var = catalog_sim_obs['mag'] + 1.01*np.max(catalog_sim_obs['mag']) * catalog_sim_obs['stellarity']
     plt.plot(in_var, out_var,',')
     plt.show()
-    #L = lfunc.makeLikelihoodMatrixND(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
-    #                                 obs_bins = obsBins, truth_bins = reconBins, simTags = ['mag','stellarity'],
-    #                                 truthTags = ['mag', 'stellarity'])
+    L = lfunc.makeLikelihoodMatrix(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
+                                     obs_bins = obsBins, truth_bins = reconBins, simTags = ['mag','stellarity'],
+                                     truthTags = ['mag', 'stellarity'])
     #stop
-    #plt.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
-    #plt.show()
+    plt.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    plt.show()
 
     
 
