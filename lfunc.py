@@ -26,62 +26,6 @@ def chooseBins(catalog = None, tag=None, binsize = None, upperLimit = None, lowe
     bins[-1] = bins[-1] + 0.001*binsize
     return bins
 
-def makeLikelihoodMatrixND(sim=None, truth=None, truthMatched = None, Lcut = 0., ncut = 0.,
-                          obs_bins = None, truth_bins = None, simTags = None, truthTags = None):
-    
-    SingleDimBinIndex = np.zeros( (truthMatched.size, len(truthTags) ), dtype=np.int64 )
-    DimFactor = np.ones( len(truthTags), dtype=np.int64)
-    outside = np.zeros(truthMatched.size, dtype=np.bool_)
-    NTruthBins = 1
-    for i in range(len(truthTags)):
-        neg = -(i+1)
-        NTruthBins = NTruthBins * (len(truth_bins[neg])-1)
-        SingleDimBinIndex[:,i] = np.digitize(truthMatched[truthTags[neg]], bins=truth_bins[neg]) - 1
-        outside = (outside) | ( (SingleDimBinIndex[:,i]==-1) | (SingleDimBinIndex[:,i]==(len(truth_bins[neg])-1)) )
-        if i > 0:
-            DimFactor[i] = (len(truth_bins[neg+1]) - 1) * DimFactor[i-1]
-    
-    DimFactor = np.reshape(DimFactor, (1,len(DimFactor)) )
-    BinIndex = np.sum( SingleDimBinIndex*DimFactor, axis=-1 )
-    d = recfunctions.append_fields(truthMatched, 'BinIndex', BinIndex)[-outside]
-    #d = recfunctions.append_fields(self.Matched, 'BinIndex', BinIndex)
-    d = np.sort(d, order='BinIndex')
-    binindex = np.arange(1, NTruthBins, 1)
-    splitat = np.searchsorted(d['BinIndex'], binindex)
-    BalrogByTruthIndex = np.split(d, splitat)
-
-    NObserved = np.zeros( len(BalrogByTruthIndex) )
-
-    NObsBins = 1
-    SingleDimBinSize = []
-    for i in range(len(simTags)):
-        NObsBins = NObsBins * (len(obs_bins[i]) - 1)
-        SingleDimBinSize.append( np.diff(obs_bins[i]) )
-    BinVolume = 1.0
-    inc = 0
-    for i in range(len(SingleDimBinSize)):
-        BinVolume = BinVolume * SingleDimBinSize[i]
-        BinVolume = np.expand_dims(BinVolume, axis=-1)
-    BinVolume = BinVolume.flatten()
-
-    Likelihood = np.zeros( (NObsBins,NTruthBins) )
-    for i in range(len(BalrogByTruthIndex)):
-        ThisTruth = np.zeros( (len(BalrogByTruthIndex[i]), len(simTags)) )
-            
-        if len(BalrogByTruthIndex[i])==0:
-            continue
-            
-        for j in range(len(simTags)):
-            ThisTruth[:,j] = (BalrogByTruthIndex[i][simTags[j]])
-
-        hist, edge = np.histogramdd(ThisTruth, bins=obs_bins)
-        nhist = hist* 1. / len(ThisTruth)
-        NObserved[i] = len(ThisTruth)
-        hist1d = nhist.flatten()
-        Likelihood[:, i] = hist1d
-    return Likelihood
-    
-
         
 def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., ncut = 0.,
                           obs_bins = None, truth_bins = None, simTag = None, truthTag = None):
@@ -105,8 +49,33 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., 
                                                             1./N_truth[truth_bin_index[i]] )
         L[L < Lcut] = 0.
     else:
-        pass
-        
+        # In this case, the user has asked us to make a likelihood
+        # matrix that maps an n-dimensional space onto another
+        # n-dimensional space.
+        # --------------------------------------------------
+        #Assume that truth_bins and obs_bins are indexable.
+        truth_bin_index = np.digitize(truthMatched[truthTag[0]], truth_bins[0]) - 1
+        obs_bin_index = np.digitize(sim[simTag[0]], obs_bins[0]) - 1
+
+        good = ((truth_bin_index > 0) & (truth_bin_index < nbins_truth) &
+                (obs_bin_index   > 0) & (obs_bin_index   < nbins_obs) )
+        # --------------------------------------------------
+        # Fancy multi-dimensional indexing.
+        for i in xrange(len(truthTag) -1 ):
+            this_truth_bin_index = np.digitize( truthMatched[truthTag[i+1]], truth_bins[i+1])
+            this_obs_bin_index = np.digitize( truthMatched[truthTag[i+1]], obs_bins[i+1])
+            good = good & ( (this_truth_bin_index > 0) & (truth_bin_index < (len(truth_bins[i+1]) - 1)) &
+                            (this_obs_bin_index   > 0) & (obs_bin_index   < (len(obs_bins[i+1]) -1) ) )
+            
+            truth_bin_index = truth_bin_index + (len(truth_bins[i])-1) * this_truth_bin_index
+            obs_bin_index = obs_bin_index + (len(obs_bins[i])-1) * this_obs_bin_index
+        # --------------------------------------------------
+        N_truth = np.bincount(truth_bin_index)
+        for i in xrange(obs_bin_index.size):
+            if N_truth[truth_bin_index[i]] > ncut:
+                L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
+                                                            1./N_truth[truth_bin_index[i]] )
+        L[L < Lcut] = 0.
     return L
     
 
