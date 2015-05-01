@@ -27,7 +27,7 @@ def addMagnitudes(mag1, mag2, zeropoint = 25.):
     newMag = zeropoint - 2.5*np.log10(newFlux)
     return newMag
 
-def generateGalaxyTruthCatalog(n_obj = 10000, slope = 2.0):
+def generateGalaxyTruthCatalog(n_obj = 10000, slope = 2.0, starting_index = 0):
     # Draw catalog entries from some simple distribution.
     # (A catalog should be a Numpy recarray, or similar, so we can get arrays indexed by keyword.)
     # (the catalog should have a 'mag' and an 'index' field)
@@ -51,7 +51,7 @@ def generateGalaxyTruthCatalog(n_obj = 10000, slope = 2.0):
     calibration = np.repeat(100.,n_obj)
     #error = np.sqrt( (sky_flux + flux) * calibration ) / calibration
     
-    index = np.arange(int(n_obj))
+    index = np.arange(int(n_obj)) + starting_index
 
     catalog = np.empty((n_obj),dtype=[('mag',mag.dtype),('balrog_index',index.dtype),
                                       ('size',size.dtype),
@@ -73,7 +73,7 @@ def generateGalaxyTruthCatalog(n_obj = 10000, slope = 2.0):
     return catalog
     
 
-def generateStarTruthCatalog(n_obj = 10000, slope = 1.0):
+def generateStarTruthCatalog(n_obj = 10000, slope = 1.0, starting_index = 0):
     stars =  generateGalaxyTruthCatalog(n_obj = n_obj, slope = slope)
     stars['size'] = 0.
     stars['stellarity'] = 1
@@ -132,99 +132,117 @@ def applyTransferFunction(catalog, SN_cut = 5., cbias = 0.0, mbias = 0.0, blend_
     # Blend. This happens after everything else.
     if blend_fraction > 0.0:
         obs_catalog = blend(obs_catalog, blend_fraction = blend_fraction)
-
-    obs_catalog = obs_catalog[(SB_new >  5. * sky_sb)]
+    
+    obs_catalog = obs_catalog[(SB_new >  5. * sky_sb)]# & (newMag < 22.)]
     
     return obs_catalog
 
 def generateTruthCatalog(n_gal  = 10000, n_star = 1000, gal_slope = 2.5, star_slope = 1.2):
     stars = generateStarTruthCatalog(n_obj = n_star, slope = star_slope)
-    galaxies = generateGalaxyTruthCatalog(n_obj = n_gal, slope = gal_slope)
+    maxIndex = np.max(stars['balrog_index'])
+    galaxies = generateGalaxyTruthCatalog(n_obj = n_gal, slope = gal_slope, starting_index = maxIndex+1)
     catalog = np.hstack( (stars, galaxies) )
     np.random.shuffle(catalog)
     return catalog
 
 def main(argv):
     # Generate a simulated simulated truth catalog.
-    psf_size = 0.4
-    catalog_sim_truth = generateTruthCatalog(n_gal  = 2e5, n_star = 1e4, gal_slope = 2.5, star_slope = 1.20)
-    catalog_sim_obs = applyTransferFunction(catalog_sim_truth, psf_size = psf_size)
-
+    psf_size = 0.5
+    catalog_calib_truth = generateTruthCatalog(n_gal  = 2e5, n_star = 2e4, gal_slope = 2.5, star_slope = 1.20)
+    catalog_calib_obs = applyTransferFunction(catalog_calib_truth, psf_size = psf_size)
     
-
-    ind1, ind2 = esutil.numpy_util.match(catalog_sim_truth['balrog_index'],catalog_sim_obs['balrog_index'])
-    '''
-    plt.plot(catalog_sim_obs['size'], catalog_sim_obs['mag'],',',color='blue')
+    catalog_sim_truth = generateTruthCatalog(n_gal  = 2e5, n_star = 2e4, gal_slope = 2.5, star_slope = 1.20)
+    catalog_sim_obs = applyTransferFunction(catalog_sim_truth, psf_size = psf_size)
+    
+    
+    ind1, ind2 = esutil.numpy_util.match(catalog_calib_truth['balrog_index'],catalog_calib_obs['balrog_index'])
+    stars = catalog_calib_obs['stellarity'] == 1
+    gals = catalog_calib_obs['stellarity'] == 0
+    plt.plot(catalog_calib_obs['size'][gals], catalog_calib_obs['mag'][gals],',',color='green')
+    plt.plot(catalog_calib_obs['size'][stars], catalog_calib_obs['mag'][stars],',',color='blue')
     plt.axvline(psf_size,linestyle='--',color='red')
     plt.gca().invert_yaxis()
     plt.show()
+
     
+
     bins = np.linspace( 0.3,1.0, 300)
-    plt.hist(catalog_sim_obs['size'],bins=bins,color='blue',label='all')
-    plt.hist(catalog_sim_obs[catalog_sim_obs['stellarity'] == 0]['size'],bins=bins,color='yellow',label='galaxies',alpha=0.5)
-    plt.hist(catalog_sim_obs[catalog_sim_obs['stellarity'] == 1]['size'],bins=bins,color='orange',label='stars',alpha=0.5)
+    plt.hist(catalog_calib_obs['size'],bins=bins,color='blue',label='all')
+    plt.hist(catalog_calib_obs[catalog_calib_obs['stellarity'] == 0]['size'],bins=bins,color='yellow',label='galaxies',alpha=0.5)
+    plt.hist(catalog_calib_obs[catalog_calib_obs['stellarity'] == 1]['size'],bins=bins,color='orange',label='stars',alpha=0.5)
     plt.axvline(psf_size*1.04,linestyle='--',color='red')
     plt.xlim([0.33,1.0])
     plt.legend(loc='best')
     plt.show()
-    '''
-    
-    obsStar = catalog_sim_obs['size'] <= psf_size * 1.04
-    obsGal  = catalog_sim_obs['size'] >  psf_size * 1.04
-    catalog_sim_obs['stellarity'][obsStar] = 1
-    catalog_sim_obs['stellarity'][obsGal] = 0
 
-    truthMatched = catalog_sim_truth[ind1].copy()
-    catalog_sim_obs = catalog_sim_obs[ind2]
-    obsMagBins = np.linspace(15,23,20)
-    truthMagBins = np.linspace(15,25,25)
+    bins = np.linspace( 15, 23., 200)
+    plt.hist(catalog_calib_obs['mag'],bins=bins,color='blue',label='all')
+    plt.hist(catalog_calib_obs[catalog_calib_obs['stellarity'] == 0]['mag'],bins=bins,color='yellow',label='galaxies',alpha=0.5)
+    plt.hist(catalog_calib_obs[catalog_calib_obs['stellarity'] == 1]['mag'],bins=bins,color='orange',label='stars',alpha=0.5)
+    plt.legend(loc='best')
+    plt.show()
+    
+    
+    obsStar = catalog_calib_obs['size'] <= psf_size * 1.02
+    obsGal  = catalog_calib_obs['size'] >  psf_size * 1.02
+    catalog_calib_obs['stellarity'][obsStar] = 1
+    catalog_calib_obs['stellarity'][obsGal] = 0
+
+    truthMatched = catalog_calib_truth.copy()
+    truthMatched = truthMatched[ind1]
+    catalog_calib_obs = catalog_calib_obs[ind2]
+    obsMagBins = np.linspace(15,23,30)
+    truthMagBins = np.linspace(15,23,30)
     starBins = np.array([-1, 0.5, 2])
     reconBins = [truthMagBins, starBins]
     obsBins = [obsMagBins, starBins]
 
     fig, (ax1, ax2) = plt.subplots(nrows = 1, ncols = 2, figsize = (14,7))
     in_var = truthMatched['mag'] + 1.01*np.max(truthMatched['mag']) * truthMatched['stellarity']
-    out_var = catalog_sim_obs['mag'] + 1.01*np.max(catalog_sim_obs['mag']) * catalog_sim_obs['stellarity']
+    out_var = catalog_calib_obs['mag'] + 1.01*np.max(catalog_calib_obs['mag']) * catalog_calib_obs['stellarity']
     ax1.plot(in_var, out_var,',')
     ax1.set_xlabel('truth mag/stellarity')
     ax1.set_ylabel('obs mag/stellarity')
-
-    L = lfunc.makeLikelihoodMatrix(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
+    
+    L = lfunc.makeLikelihoodMatrix(sim= catalog_calib_obs, truth=catalog_calib_truth, truthMatched = truthMatched,
                                      obs_bins = obsBins, truth_bins = reconBins, simTag = ['mag','stellarity'],
                                      truthTag = ['mag', 'stellarity'])
+    
     ax2.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
     ax2.set_xlabel('truth mag/stellarity')
     ax2.set_ylabel('obs mag/stellarity')
     fig.savefig("nd-likelihood_test-mag_stellarity.png")
     plt.show()
 
-    N_sim_obs, _ = np.histogramdd([catalog_sim_obs['mag'],catalog_sim_obs['stellarity']], bins = obsBins, normed=True)
-    N_sim_truth, _ = np.histogramdd([catalog_sim_truth['mag'], catalog_sim_truth['stellarity']], bins=reconBins, normed = True)
-    N_sim_obs = N_sim_obs* 1. * catalog_sim_obs.size
-    N_sim_truth = N_sim_truth * 1. * catalog_sim_truth.size
+    N_sim_obs, _ = np.histogramdd([catalog_calib_obs['mag'],catalog_calib_obs['stellarity']], bins = obsBins)
+    N_obs_plot,_ = np.histogramdd([catalog_calib_obs['mag'],catalog_calib_obs['stellarity']], bins = reconBins)
+    N_sim_truth, _ = np.histogramdd([catalog_calib_truth['mag'], catalog_calib_truth['stellarity']], bins= reconBins)
+    N_sim_truth_matched, _ = np.histogramdd([truthMatched['mag'], truthMatched['stellarity']], bins= reconBins)
     
     obsShape = N_sim_obs.shape
     truthShape = N_sim_truth.shape
     N_sim_obs_flat = np.ravel(N_sim_obs, order='F')
     N_sim_truth_flat = np.ravel(N_sim_truth, order='F')
     A = L.copy()
-    lambda_reg = 0.01
+    lambda_reg = 0.0001
     Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(N_sim_truth_flat.size ) ), A.T)
+    #Ainv = np.linalg.pinv(A)
     N_real_truth_flat = np.dot(Ainv, N_sim_obs_flat)
-    N_real_truth = np.reshape(N_real_truth_flat, truthShape, order='F') #* 1./(truthMagBins[1] - truthMagBins[0])
-    deltaMag = 0.
-    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. - deltaMag , N_real_truth[:,0],'--', label='galaxies (est.)')
-    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. - deltaMag , N_real_truth[:,1],'--', label = 'stars (est)')
-    plt.plot( ( obsMagBins[0:-1] + obsMagBins[1:] )/2. + deltaMag, np.sum(N_sim_obs,1), '.', label='all (obs.)')
-    N_gal_hist, _ = np.histogram(catalog_sim_truth['mag'][catalog_sim_truth['stellarity'] == 0],bins=truthMagBins, density=True)
-    N_gal_hist = N_gal_hist * np.sum(catalog_sim_truth['stellarity'] == 0 )
-    N_star_hist, _ = np.histogram(catalog_sim_truth['mag'][catalog_sim_truth['stellarity'] == 1],bins=truthMagBins, density=True)
-    N_star_hist = N_star_hist * np.sum(catalog_sim_truth['stellarity'] == 1 )
-    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. + deltaMag, N_gal_hist  , label='galaxies (true)')
-    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. + deltaMag, N_star_hist, label='stars (true)')
+    N_real_truth = np.reshape(N_real_truth_flat, truthShape, order='F') 
+
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_real_truth[:,0],'--', label='galaxies (est.)')
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_real_truth[:,1],'--', label = 'stars (est)')
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,0], '.', label='galaxies (obs.)')
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,1], '.', label='stars (obs.)')
+    
+    N_gal_hist, _ = np.histogram(catalog_calib_truth['mag'][catalog_calib_truth['stellarity'] == 0],bins=truthMagBins)
+    N_star_hist, _ = np.histogram(catalog_calib_truth['mag'][catalog_calib_truth['stellarity'] == 1], bins=truthMagBins)
+
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_gal_hist  , label='galaxies (true)')
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2., N_star_hist, label='stars (true)')
     plt.legend(loc='best')
     plt.yscale('log')
-    plt.ylim([1,3.*np.max(N_gal_hist)])
+    plt.ylim([1,3.*np.max(N_sim_truth)])
     plt.savefig("nd-reconstruction_test-mag_stellarity.png")
     plt.show()
     
