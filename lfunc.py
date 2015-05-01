@@ -26,7 +26,27 @@ def chooseBins(catalog = None, tag=None, binsize = None, upperLimit = None, lowe
     bins[-1] = bins[-1] + 0.001*binsize
     return bins
 
-        
+
+def assignToBins(catalog= None, tag = None, bins = None):
+    nbins = np.product( [len(x)-1 for x in bins] )
+    bin_index = np.digitize(catalog[tag[0]], bins[0]) - 1
+    keep =  (bin_index >= 0) & ( bin_index < (len(bins[0]) -1) )
+    for i in xrange(len(tag) -1 ):
+        this_bin_index = np.digitize( catalog[tag[i+1]], bins[i+1]) -1
+        keep =  keep &  ( (this_bin_index >= 0) & (this_bin_index < (len(bins[i+1]) - 1)) ) 
+        bin_index = bin_index + (len(bins[i])-1) * this_bin_index
+        bin_index = bin_index[keep]
+    return bin_index
+
+def histogramND(catalog = None, tag = None, bins = None, flat = False):
+    bin_index = assign_to_bins(catalog=catalog, tag=tag, bins=bins)
+    histogram = np.bincount(bin_index)
+
+    if flat is False:
+        nbins_truth = [len(x)-1 for x in bins] 
+        histogram = np.reshape(histogram, nbins_truth)
+    return histogram
+
 def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., ncut = 0.,
                           obs_bins = None, truth_bins = None, simTag = None, truthTag = None):
     if ( len(simTag) == 1 ) and (len(truthTag) == 1 ):
@@ -50,8 +70,8 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., 
         L[L < Lcut] = 0.
     else:
         # In this case, the user has asked us to make a likelihood
-        # matrix that maps an n-dimensional space onto another
-        # n-dimensional space.
+        # matrix that maps an n>1 -dimensional space onto another
+        # n>1 -dimensional space.
         nbins_truth =  np.product( [len(x)-1 for x in truth_bins] )
         nbins_obs =  np.product( [len(x)-1 for x in obs_bins] )
         
@@ -59,24 +79,33 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., 
         #Assume that truth_bins and obs_bins are indexable.
         truth_bin_index = np.digitize(truthMatched[truthTag[0]], truth_bins[0]) - 1
         obs_bin_index = np.digitize(sim[simTag[0]], obs_bins[0]) - 1
+        all_bin_index = np.digitize(truth[truthTag[0]], truth_bins[0]) -1
         
         good = ((truth_bin_index >= 0) & (truth_bin_index < (len(truth_bins[0]) - 1)) &
                 (obs_bin_index   >= 0) & (obs_bin_index   < (len(obs_bins[0]) -1)) )
+
+        keep =  (all_bin_index >= 0) & ( all_bin_index < (len(truth_bins[0]) -1) ) 
 
         # --------------------------------------------------
         # Fancy multi-dimensional indexing.
         for i in xrange(len(truthTag) -1 ):
             this_truth_bin_index = np.digitize( truthMatched[truthTag[i+1]], truth_bins[i+1]) -1
             this_obs_bin_index = np.digitize( sim[simTag[i+1]], obs_bins[i+1]) -1
+            this_all_bin_index = np.digitize( truth[truthTag[i+1]], truth_bins[i+1]) - 1
             good =  good & ( (this_truth_bin_index >= 0) & (this_truth_bin_index < (len(truth_bins[i+1]) - 1)) &
                                 (this_obs_bin_index   >= 0) & (this_obs_bin_index   < (len(obs_bins[i+1]) -1) ) )
+            keep = keep & ( (this_all_bin_index >= 0) & ( this_all_bin_index < (len(truth_bins[0]) -1) ) )
             truth_bin_index = truth_bin_index + (len(truth_bins[i])-1) * this_truth_bin_index
             obs_bin_index = obs_bin_index + (len(obs_bins[i])-1) * this_obs_bin_index
+            all_bin_index = all_bin_index + (len(truth_bins[i])-1) * this_all_bin_index
+        
         # --------------------------------------------------
         truth_bin_index = truth_bin_index[good]
         obs_bin_index = obs_bin_index[good]
-        
-        N_truth = np.bincount(truth_bin_index)
+        all_bin_index = all_bin_index[keep]
+
+
+        N_truth = np.bincount(all_bin_index)
         L = np.zeros( (nbins_obs, nbins_truth) )
         for i in xrange(obs_bin_index.size):
             if N_truth[truth_bin_index[i]] > ncut:
@@ -282,6 +311,8 @@ def initializeMCMC(N_data, likelihood, multiplier = 1.):
     start= np.sqrt( ( N_initial + (multiplier*errors*N_initial) * np.random.randn( nWalkers, nParams ) )**2 )
 
     return start, nWalkers
+
+
 
 
 

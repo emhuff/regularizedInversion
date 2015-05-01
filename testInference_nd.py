@@ -137,7 +137,7 @@ def applyTransferFunction(catalog, SN_cut = 5., cbias = 0.0, mbias = 0.0, blend_
     
     return obs_catalog
 
-def generateTruthCatalog(n_gal  = 100000, n_star = 10000, gal_slope = 2.5, star_slope = 1.0):
+def generateTruthCatalog(n_gal  = 10000, n_star = 1000, gal_slope = 2.5, star_slope = 1.2):
     stars = generateStarTruthCatalog(n_obj = n_star, slope = star_slope)
     galaxies = generateGalaxyTruthCatalog(n_obj = n_gal, slope = gal_slope)
     catalog = np.hstack( (stars, galaxies) )
@@ -146,9 +146,11 @@ def generateTruthCatalog(n_gal  = 100000, n_star = 10000, gal_slope = 2.5, star_
 
 def main(argv):
     # Generate a simulated simulated truth catalog.
-    psf_size = 0.5
-    catalog_sim_truth = generateTruthCatalog(n_gal  = 100000, n_star = 10000, gal_slope = 2.5, star_slope = 1.0)
+    psf_size = 0.4
+    catalog_sim_truth = generateTruthCatalog(n_gal  = 2e5, n_star = 1e4, gal_slope = 2.5, star_slope = 1.20)
     catalog_sim_obs = applyTransferFunction(catalog_sim_truth, psf_size = psf_size)
+
+    
 
     ind1, ind2 = esutil.numpy_util.match(catalog_sim_truth['balrog_index'],catalog_sim_obs['balrog_index'])
     '''
@@ -196,8 +198,39 @@ def main(argv):
     fig.savefig("nd-likelihood_test-mag_stellarity.png")
     plt.show()
 
+    N_sim_obs, _ = np.histogramdd([catalog_sim_obs['mag'],catalog_sim_obs['stellarity']], bins = obsBins, normed=True)
+    N_sim_truth, _ = np.histogramdd([catalog_sim_truth['mag'], catalog_sim_truth['stellarity']], bins=reconBins, normed = True)
+    N_sim_obs = N_sim_obs* 1. * catalog_sim_obs.size
+    N_sim_truth = N_sim_truth * 1. * catalog_sim_truth.size
+    
+    obsShape = N_sim_obs.shape
+    truthShape = N_sim_truth.shape
+    N_sim_obs_flat = np.ravel(N_sim_obs, order='F')
+    N_sim_truth_flat = np.ravel(N_sim_truth, order='F')
+    A = L.copy()
+    lambda_reg = 0.01
+    Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(N_sim_truth_flat.size ) ), A.T)
+    N_real_truth_flat = np.dot(Ainv, N_sim_obs_flat)
+    N_real_truth = np.reshape(N_real_truth_flat, truthShape, order='F') #* 1./(truthMagBins[1] - truthMagBins[0])
+    deltaMag = 0.
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. - deltaMag , N_real_truth[:,0],'--', label='galaxies (est.)')
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. - deltaMag , N_real_truth[:,1],'--', label = 'stars (est)')
+    plt.plot( ( obsMagBins[0:-1] + obsMagBins[1:] )/2. + deltaMag, np.sum(N_sim_obs,1), '.', label='all (obs.)')
+    N_gal_hist, _ = np.histogram(catalog_sim_truth['mag'][catalog_sim_truth['stellarity'] == 0],bins=truthMagBins, density=True)
+    N_gal_hist = N_gal_hist * np.sum(catalog_sim_truth['stellarity'] == 0 )
+    N_star_hist, _ = np.histogram(catalog_sim_truth['mag'][catalog_sim_truth['stellarity'] == 1],bins=truthMagBins, density=True)
+    N_star_hist = N_star_hist * np.sum(catalog_sim_truth['stellarity'] == 1 )
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. + deltaMag, N_gal_hist  , label='galaxies (true)')
+    plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. + deltaMag, N_star_hist, label='stars (true)')
+    plt.legend(loc='best')
+    plt.yscale('log')
+    plt.ylim([1,3.*np.max(N_gal_hist)])
+    plt.savefig("nd-reconstruction_test-mag_stellarity.png")
+    plt.show()
+    
+    
     # --------------------------------------------------
-
+    '''
     obsMagBins = np.linspace(15,23,20)
     truthMagBins = np.linspace(15,25,25)
     obsSizeBins = np.linspace(0, 2, 20)
@@ -214,6 +247,9 @@ def main(argv):
     ax2.set_ylabel('obs mag/size')
     fig.savefig("nd-likelihood_test-mag_size.png")
     plt.show()
+    '''
+    #--------------------------------------------------
+    
     stop
     
     
