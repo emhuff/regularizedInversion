@@ -133,7 +133,7 @@ def applyTransferFunction(catalog, SN_cut = 5., cbias = 0.0, mbias = 0.0, blend_
     if blend_fraction > 0.0:
         obs_catalog = blend(obs_catalog, blend_fraction = blend_fraction)
     
-    obs_catalog = obs_catalog[(SB_new >  5. * sky_sb)]# & (newMag < 22.)]
+    obs_catalog = obs_catalog[(SB_new >  3. * sky_sb)]
     
     return obs_catalog
 
@@ -151,7 +151,7 @@ def main(argv):
     catalog_calib_truth = generateTruthCatalog(n_gal  = 2e5, n_star = 2e4, gal_slope = 2.5, star_slope = 1.20)
     catalog_calib_obs = applyTransferFunction(catalog_calib_truth, psf_size = psf_size)
     
-    catalog_sim_truth = generateTruthCatalog(n_gal  = 2e5, n_star = 2e4, gal_slope = 2.5, star_slope = 1.20)
+    catalog_sim_truth = generateTruthCatalog(n_gal  = 2e5, n_star = 2e4, gal_slope = 2.0, star_slope = 1.00)
     catalog_sim_obs = applyTransferFunction(catalog_sim_truth, psf_size = psf_size)
     
     
@@ -162,7 +162,7 @@ def main(argv):
     plt.plot(catalog_calib_obs['size'][stars], catalog_calib_obs['mag'][stars],',',color='blue')
     plt.axvline(psf_size,linestyle='--',color='red')
     plt.gca().invert_yaxis()
-    plt.show()
+    plt.show(block=False)
 
     
 
@@ -173,14 +173,14 @@ def main(argv):
     plt.axvline(psf_size*1.04,linestyle='--',color='red')
     plt.xlim([0.33,1.0])
     plt.legend(loc='best')
-    plt.show()
+    plt.show(block=False)
 
     bins = np.linspace( 15, 23., 200)
     plt.hist(catalog_calib_obs['mag'],bins=bins,color='blue',label='all')
     plt.hist(catalog_calib_obs[catalog_calib_obs['stellarity'] == 0]['mag'],bins=bins,color='yellow',label='galaxies',alpha=0.5)
     plt.hist(catalog_calib_obs[catalog_calib_obs['stellarity'] == 1]['mag'],bins=bins,color='orange',label='stars',alpha=0.5)
     plt.legend(loc='best')
-    plt.show()
+    plt.show(block=False)
     
     
     obsStar = catalog_calib_obs['size'] <= psf_size * 1.02
@@ -197,6 +197,13 @@ def main(argv):
     reconBins = [truthMagBins, starBins]
     obsBins = [obsMagBins, starBins]
 
+    obsStar = catalog_sim_obs['size'] <= psf_size * 1.02
+    obsGal  = catalog_sim_obs['size'] >  psf_size * 1.02
+    catalog_sim_obs['stellarity'][obsStar] = 1
+    catalog_sim_obs['stellarity'][obsGal] = 0
+
+
+    
     fig, (ax1, ax2) = plt.subplots(nrows = 1, ncols = 2, figsize = (14,7))
     in_var = truthMatched['mag'] + 1.01*np.max(truthMatched['mag']) * truthMatched['stellarity']
     out_var = catalog_calib_obs['mag'] + 1.01*np.max(catalog_calib_obs['mag']) * catalog_calib_obs['stellarity']
@@ -212,12 +219,15 @@ def main(argv):
     ax2.set_xlabel('truth mag/stellarity')
     ax2.set_ylabel('obs mag/stellarity')
     fig.savefig("nd-likelihood_test-mag_stellarity.png")
-    plt.show()
+    plt.show(block=False)
 
-    N_sim_obs, _ = np.histogramdd([catalog_calib_obs['mag'],catalog_calib_obs['stellarity']], bins = obsBins)
-    N_obs_plot,_ = np.histogramdd([catalog_calib_obs['mag'],catalog_calib_obs['stellarity']], bins = reconBins)
-    N_sim_truth, _ = np.histogramdd([catalog_calib_truth['mag'], catalog_calib_truth['stellarity']], bins= reconBins)
-    N_sim_truth_matched, _ = np.histogramdd([truthMatched['mag'], truthMatched['stellarity']], bins= reconBins)
+
+
+    
+    N_sim_obs, _ = np.histogramdd([catalog_sim_obs['mag'],catalog_sim_obs['stellarity']], bins = obsBins)
+    N_obs_plot,_ = np.histogramdd([catalog_sim_obs['mag'],catalog_sim_obs['stellarity']], bins = reconBins)
+    N_sim_truth, _ = np.histogramdd([catalog_sim_truth['mag'], catalog_sim_truth['stellarity']], bins= reconBins)
+    
     
     obsShape = N_sim_obs.shape
     truthShape = N_sim_truth.shape
@@ -235,8 +245,8 @@ def main(argv):
     plt.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,0], '.', label='galaxies (obs.)')
     plt.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,1], '.', label='stars (obs.)')
     
-    N_gal_hist, _ = np.histogram(catalog_calib_truth['mag'][catalog_calib_truth['stellarity'] == 0],bins=truthMagBins)
-    N_star_hist, _ = np.histogram(catalog_calib_truth['mag'][catalog_calib_truth['stellarity'] == 1], bins=truthMagBins)
+    N_gal_hist, _ = np.histogram(catalog_sim_truth['mag'][catalog_sim_truth['stellarity'] == 0],bins=truthMagBins)
+    N_star_hist, _ = np.histogram(catalog_sim_truth['mag'][catalog_sim_truth['stellarity'] == 1], bins=truthMagBins)
 
     plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_gal_hist  , label='galaxies (true)')
     plt.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2., N_star_hist, label='stars (true)')
@@ -244,28 +254,73 @@ def main(argv):
     plt.yscale('log')
     plt.ylim([1,3.*np.max(N_sim_truth)])
     plt.savefig("nd-reconstruction_test-mag_stellarity.png")
-    plt.show()
+    plt.show(block=False)
     
     
     # --------------------------------------------------
-    '''
-    obsMagBins = np.linspace(15,23,20)
-    truthMagBins = np.linspace(15,25,25)
-    obsSizeBins = np.linspace(0, 2, 20)
-    truthSizeBins = np.linspace(0,2,20)
+    obsMagBins = np.linspace(15,23,30)
+    truthMagBins = np.linspace(15,25,35)
+    obsSizeBins = np.linspace(0, 2, 30)
+    truthSizeBins = np.linspace(0,2,35)
+
+    obsMagBins_cen = ( obsMagBins[0:-1] + obsMagBins[1:] )/2.
+    truthMagBins_cen = ( truthMagBins[0:-1] + truthMagBins[1:] ) /2.
+    obsSizeBins_cen = ( obsSizeBins[0:-1] + obsSizeBins[1:] ) / 2.
+    truthSizeBins_cen = ( truthSizeBins[0:-1] + truthSizeBins[1:] ) /2.
+
+    
     reconBins = [truthMagBins, truthSizeBins]
     obsBins = [obsMagBins, obsSizeBins]
 
     fig, ax2 = plt.subplots(nrows = 1, ncols = 1)
-    L = lfunc.makeLikelihoodMatrix(sim= catalog_sim_obs, truth=catalog_sim_truth, truthMatched = truthMatched,
+    L = lfunc.makeLikelihoodMatrix(sim= catalog_calib_obs, truth=catalog_calib_truth, truthMatched = truthMatched,
                                      obs_bins = obsBins, truth_bins = reconBins, simTag = ['mag','size'],
                                      truthTag = ['mag', 'size'])
     ax2.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
     ax2.set_xlabel('truth mag/size')
     ax2.set_ylabel('obs mag/size')
     fig.savefig("nd-likelihood_test-mag_size.png")
-    plt.show()
-    '''
+    plt.show(block=False)
+
+    N_sim_truth, _ = np.histogramdd([catalog_sim_truth['mag'], catalog_sim_truth['size']], bins= reconBins)
+    N_sim_obs,   _ = np.histogramdd([catalog_sim_obs['mag'],catalog_sim_obs['size']], bins = obsBins)
+    N_obs_plot,  _ = np.histogramdd([catalog_sim_obs['mag'],catalog_sim_obs['size']], bins = reconBins)
+    truthShape = N_sim_truth.shape
+    N_sim_obs_flat = np.ravel(N_sim_obs, order='F')
+    N_sim_truth_flat = np.ravel(N_sim_truth, order='F')
+
+    A = L.copy()
+    lambda_reg = 0.01
+    Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(N_sim_truth_flat.size ) ), A.T)
+    N_real_truth_flat = np.dot(Ainv, N_sim_obs_flat)
+    N_real_truth = np.reshape(N_real_truth_flat, truthShape, order='F')
+    
+    fig, ( (ax1, ax2, ax3), (ax4, ax5, _)) = plt.subplots(nrows=2,ncols=3,figsize=(19,13))
+    ax1.set_xlabel('size (arcsec)')
+    ax1.set_ylabel('mag')
+    im1 = ax1.imshow(np.arcsinh(N_sim_truth/0.01),origin='lower',cmap=plt.cm.Greys, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto')
+    ax1.set_title('truth')
+    im2 = ax2.imshow(np.arcsinh(N_real_truth/0.01), origin='lower',cmap=plt.cm.Greys,vmin=0., extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto')
+    ax2.set_title('reconstruction')
+
+    im3 = ax3.imshow(np.arcsinh(N_obs_plot/0.01),origin='lower',cmap=plt.cm.Greys, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto')
+    ax3.set_title('uncorrected observations')
+    im4 = ax4.imshow(np.arcsinh(( N_real_truth / N_sim_truth-1 )),origin='lower',cmap=plt.cm.seismic, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=5, vmin = -5)
+    ax4.set_title('reconstr. / truth -1 \n (frac. residuals)')
+    im5 = ax5.imshow(np.arcsinh(( N_obs_plot / N_sim_truth-1 )),origin='lower',cmap=plt.cm.seismic, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=5, vmin = -5)
+    ax5.set_title('observed / truth -1 \n (frac. residuals)')
+    fig.colorbar(im1,ax=ax1)
+    ax1.axvline(psf_size,color='green',linestyle='--',alpha=0.75)
+    ax2.axvline(psf_size,color='green',linestyle='--',alpha=0.75)
+    ax3.axvline(psf_size,color='green',linestyle='--',alpha=0.75)
+    ax4.axvline(psf_size,color='green',linestyle='--',alpha=0.75)
+    ax5.axvline(psf_size,color='green',linestyle='--',alpha=0.75)
+    fig.colorbar(im2,ax=ax2)
+    fig.colorbar(im3,ax=ax3)
+    fig.colorbar(im4,ax=ax4)
+    fig.colorbar(im5,ax=ax5)
+    fig.savefig('nd-reconstruction_test-mag_size.png')
+    fig.show()
     #--------------------------------------------------
     
     stop
