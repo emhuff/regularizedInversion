@@ -97,6 +97,7 @@ def SimFields(band='i',table='sva1v2'):
         m.spread_model as spread_model,
         m.spreaderr_model as spreaderr_model,
         m.class_star as class_star,
+        m.flux_radius as flux_radius,
         m.mag_psf as mag_psf,
         t.mag as truth_mag_auto,
         m.flags as flags
@@ -122,12 +123,13 @@ def DESFields(tilestuff, band='i'):
            spreaderr_model_%s as spreaderr_model,
            class_star_%s as class_star,
            mag_psf_%s as mag_psf,
+           flux_radius_%s as flux_radius,
            flags_%s as flags
         FROM
            sva1_coadd_objects
         WHERE
            tilename in %s
-        """ % (band,band,band,band,band,band,band,band,str(tuple(np.unique(tilestuff['tilename']))))
+        """ % (band,band,band,band,band,band,band,band,band,str(tuple(np.unique(tilestuff['tilename']))))
     return q
 
 
@@ -139,6 +141,7 @@ def TruthFields(band='i', table = 'sva1v2'):
         ra,
         dec,
         objtype,
+        HALFLIGHTRADIUS_0 as radius,
         mag
     FROM
         SUCHYTA1.balrog_%s_truth_%s        
@@ -420,7 +423,7 @@ def matchCatalogs(cat1, cat2 ,tag = 'balrog_index'):
     
 def getStellarityCatalogs( reload = False, band = None, nside = None):
     
-    des, balrogObs, balrogTruthMatched, balrogTruth = getCleanCatalogs(reload=False,band=band)
+    des, balrogObs, balrogTruthMatched, balrogTruth = getCleanCatalogs(reload=reload,band=band)
     des = modestify(des)
     balrogObs = modestify(balrogObs)
 
