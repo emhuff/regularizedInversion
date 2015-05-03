@@ -420,10 +420,8 @@ def matchCatalogs(cat1, cat2 ,tag = 'balrog_index'):
     
 def getStellarityCatalogs( reload = False, band = None, nside = None):
     
-    des1, balrogObs1, balrogTruthMatched1, balrogTruth1 = getCleanCatalogs(reload=False,band=band)
+    des, balrogObs, balrogTruthMatched, balrogTruth = getCleanCatalogs(reload=False,band=band)
     des = modestify(des)
     balrogObs = modestify(balrogObs)
-    balrogTruthMatched = modestify(balrogTruthMatched)
-    balrogTruth = modestify(balrogTruth)
 
     return des, balrogObs, balrogTruthMatched, balrogTruth
