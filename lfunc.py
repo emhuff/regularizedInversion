@@ -49,7 +49,7 @@ def histogramND(catalog = None, tag = None, bins = None, flat = False):
 
 def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., ncut = 0.,
                           obs_bins = None, truth_bins = None, simTag = None, truthTag = None):
-    if ( len(simTag) == 1 ) and (len(truthTag) == 1 ):
+    if ( ( len(simTag) == 1) or ( type(simTag) is type(''))  ) and ( (len(truthTag) == 1 ) or (type(truthTag) is type('') ) ) :
         obs_bin_index = np.digitize(sim[simTag], obs_bins) - 1
         truth_bin_index = np.digitize(truthMatched[truthTag], truth_bins) - 1
         # Limit loop to objects in the given bin ranges.
@@ -117,38 +117,59 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., 
 
 
 def getAllLikelihoods( truth=None, sim=None, truthMatched = None, healConfig=None , doplot = False, getBins = False, ncut = 0.,
-            ratag= 'ra', dectag = 'dec', obs_bins = None, truth_bins = None, obsTag = 'mag_auto', truthTag = 'mag'):
+            ratag= 'ra', dectag = 'dec', obs_bins = None, truth_bins = None, obsTag = 'mag_auto', truthTag = 'mag', Lcut= 0.):
     
-    if healConfig is None:
-        healConfig = getHealConfig()
-        truth = HealPixifyCatalogs(catalog=truth, healConfig=healConfig, ratag=ratag, dectag = dectag)
-        sim = HealPixifyCatalogs(catalog=sim, healConfig=healConfig, ratag=ratag, dectag = dectag)
-        truthMatched = HealPixifyCatalogs(catalog=truthMatched, healConfig=healConfig, ratag=ratag, dectag = dectag)
 
-    useInds = np.unique(sim['HEALIndex'])
+    # Check the dimensionality of the binning schemes.
+    if ( (len(truthTag) > 1) and type(truthTag) is not type(''))  or ( ( len(obsTag) > 1 ) and (type(obsTag) is not type('') )) :
+        if obs_bins is None:
+            obs_bins = [chooseBins(catalog=sim, tag = tag, binsize=0.1,upperLimit=24.5,lowerLimit=15.) for tag in obsTag]
+        if truth_bins is None:
+            truth_bins = [ chooseBins(catalog = truthMatched, tag = truthTag, binsize = 0.1,upperLimit=26.,lowerLimit=15) for tag in obsTag]
+        nbins_truth =  np.product( [len(x)-1 for x in truth_bins] )
+        nbins_obs =  np.product( [len(x)-1 for x in obs_bins] )
+        multiDim = True
 
-    if obs_bins is None:
-        obs_bins = chooseBins(catalog=sim, tag = obsTag, binsize=0.1,upperLimit=24.5,lowerLimit=15.)
-    if truth_bins is None:
-        truth_bins = chooseBins(catalog = truthMatched, tag = truthTag, binsize = 0.1,upperLimit=26.,lowerLimit=15)
-
-    truth_bin_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
-    obs_bin_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
+    else:
+        if obs_bins is None:
+            obs_bins = chooseBins(catalog=sim, tag = obsTag, binsize=0.1,upperLimit=24.5,lowerLimit=15.) 
+        if truth_bins is None:
+            truth_bins = chooseBins(catalog = truthMatched, tag = truthTag, binsize = 0.1,upperLimit=26.,lowerLimit=15) 
+        nbins_truth =  len(truth_bins) -1
+        nbins_obs =  len(obs_bins) -1
+        multiDim = False
         
-    Lensemble = np.empty( (obs_bins.size-1 , truth_bins.size-1, useInds.size) )
+
+    try:
+        useInds = np.unique(sim['HEALIndex'])
+    except:
+        import cfunc
+        truth = cfunc.HealPixifyCatalogs(catalog=truth, healConfig=healConfig)
+        sim = cfunc.HealPixifyCatalogs(catalog=sim, healConfig=healConfig)
+        truthMatched = cfunc.HealPixifyCatalogs(catalog=truthMatched, healConfig = healConfig)
+        truthMatched['HEALIndex'] = sim['HEALIndex']
+        useInds = np.unique(sim['HEALIndex'])
+        
+    Lensemble = np.empty( (nbins_obs , nbins_truth, useInds.size) )
 
     if doplot is True:
+        if not multiDim:
+            truth_bin_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
+            obs_bin_centers = (obs_bins[0:-1] + obs_bins[1:])/2.
+
         from matplotlib.backends.backend_pdf import PdfPages
         from matplotlib.colors import LogNorm
         pp = PdfPages('likelihoods.pdf')
         fig,ax = plt.subplots(figsize=(6.,6.))
         # Make a plot of the likelihood of the whole region.
-        masterLikelihood =  makeLikelihoodMatrix( sim=sim, truth=truth, truthMatched = truthMatched, Lcut = 0.,
+        masterLikelihood =  makeLikelihoodMatrix( sim=sim, truth=truth, truthMatched = truthMatched, Lcut = Lcut,
                                                     obs_bins = obs_bins, truth_bins = truth_bins,
                                                     simTag = obsTag, truthTag = truthTag, ncut = ncut)
-            
-        im = ax.imshow(np.arcsinh(masterLikelihood/1e-3), origin='lower',cmap=plt.cm.Greys,
-                       extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
+        if not multiDim:
+            im = ax.imshow(np.arcsinh(masterLikelihood/1e-3), origin='lower',cmap=plt.cm.Greys,
+                        extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
+        else:
+            im = ax.imshow(np.arcsinh(masterLikelihood/1e-3), origin='lower',cmap=plt.cm.Greys)
         ax.set_xlabel('truth ')
         ax.set_ylabel('measured ')
         ax.set_title('full area likelihood')
@@ -172,8 +193,12 @@ def getAllLikelihoods( truth=None, sim=None, truthMatched = None, healConfig=Non
             Lensemble[:,:,i] = thisLikelihood
             if doplot is True:
                 fig,ax = plt.subplots(figsize = (6.,6.))
-                im = ax.imshow(np.arcsinh(thisLikelihood/1e-3), origin='lower',cmap=plt.cm.Greys,
-                               extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
+                if not multiDim:
+                    im = ax.imshow(np.arcsinh(thisLikelihood/1e-3), origin='lower',cmap=plt.cm.Greys,
+                                   extent = [truth_bin_centers[0],truth_bin_centers[-1],obs_bin_centers[0],obs_bin_centers[-1]])
+                else:
+                    im = ax.imshow(np.arcsinh(thisLikelihood/1e-3), origin='lower',cmap=plt.cm.Greys)
+                    
                 ax.set_xlabel('truth mag.')
                 ax.set_ylabel('measured mag.')
                 ax.set_title('nside= '+str(healConfig['map_nside'])+', HEALPixel= '+str(hpIndex) )
