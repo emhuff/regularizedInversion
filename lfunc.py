@@ -255,6 +255,8 @@ def likelihoodPCA(likelihood= None,  doplot = False, band = None,
         fig,ax = plt.subplots(1,1,figsize = (6.,6.) )
         ax.plot(np.abs(s))
         ax.set_yscale('log')
+        ax.set_xscale('log')
+        ax.set_ylim([np.min(s[s > 1e-6]), 2*np.max(s)])
         ax.set_xlabel('rank')
         ax.set_ylabel('eigenvalue')
         pp.savefig(fig)
@@ -338,33 +340,72 @@ def initializeMCMC(N_data, likelihood, multiplier = 1.):
     return start, nWalkers
 
 
-
+def getBinCenters(bins = None):
+    if ( type(bins) is not list) and (type(bins) is not tuple):
+        bin_centers = (bins[0:-1] + bins[1:])/2.
+    else:
+        bin_centers = [( thisBins[0:-1] + thisBins[1:] ) / 2. for thisBins in bins]
+    
+    return bin_centers
 
 
 def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = None, tag = 'mag_auto',
-                invType = 'basic', lambda_reg = 1e-6, prior = None, priorNumber = None):
+                invType = 'tikhonov', lambda_reg = 1e-6, prior = None, priorNumber = None):
 
-
-    N_real_obs, _  = np.histogram(catalog[tag], bins = obs_bins)
+    # Some conditions to help us deal with multi-dimensional reconstructions.
+    if type(tag) is not type(''):
+        pts = [catalog[thisTag] for thisTag in tag]
+        n_tags = len(tag)
+    else:
+        pts = catalog[tag]
+        n_tags = 1
+    
+    N_real_obs, _  = np.histogramdd( pts, bins = obs_bins )
     N_real_obs = N_real_obs*1.0
+
+    if n_tags > 1:
+        shape_orig = N_real_obs.shape
+        N_real_obs = np.ravel( N_real_obs, order='F' )
+        
     A = likelihood.copy()
     
     if invType is 'basic':
         if prior is None:
-            prior = np.zeros(truth_bins.size-1)
+            if n_tags == 1:
+                nbins_truth = truth_bins.size-1
+                prior = np.zeros(truth_bins.size-1)
+            else:
+                nbins_truth = np.product( [len(x)-1 for x in truth_bins] )
+                prior = np.zeros( nbins_truth )
+        else:
+            prior = np.ravel(prior.copy(), order = 'F' )
+            nbins_truth = len(prior) 
 
-        Ainv = np.linalg.pinv(A,rcond = lambda_reg)
-        N_real_truth = np.dot(Ainv, N_real_obs - np.dot(A, prior)) + prior
-        covar_truth = np.diag(N_real_truth)
+        Ainv = np.linalg.pinv( A,rcond = lambda_reg )
+        N_real_truth = np.dot( Ainv, N_real_obs - np.dot(A, prior) ) + prior
+        covar_truth = np.diag( N_real_truth )
         Areg = np.dot(Ainv, A)
         covar_recon = np.dot( np.dot(Areg, covar_truth), Areg.T)
         leakage = np.abs(np.dot( Areg, N_real_truth) - N_real_truth)    
         errors = np.sqrt( np.diag(covar_recon) ) + leakage 
-
+        if n_tags > 1:
+            N_real_truth = np.ravel(N_real_truth, order='F')
+            errors = np.ravel(errors, order='F')
+        
     if invType is 'tikhonov':
         if prior is None:
-            prior = np.zeros(truth_bins.size-1)
-        Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(truth_bins.size - 1 ) ), A.T)
+            if n_tags == 1:
+                nbins_truth = truth_bins.size-1
+                prior = np.zeros(truth_bins.size-1)
+            else:
+                nbins_truth = np.product( [len(x)-1 for x in truth_bins] )
+                prior = np.zeros( nbins_truth )
+        else:
+            prior = np.ravel(prior.copy(), order = 'F' )
+            nbins_truth = len(prior) 
+        
+                
+        Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity( nbins_truth ) ), A.T)
         N_real_truth = np.dot(Ainv, N_real_obs - np.dot(A, prior)) + prior
         covar_truth = np.diag(N_real_truth)
         Areg = np.dot(Ainv, A)
@@ -375,31 +416,11 @@ def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = N
         g = np.trace( lambda_reg * aainv)
         reg_err = lambda_reg / (1 + g) * np.dot( np.dot( np.dot( aainv, aainv), A.T) , N_real_obs)        
         errors = np.sqrt( np.diag(covar_recon) ) + leakage + np.abs(reg_err)
+        if n_tags > 1:
+            N_real_truth = np.reshape(N_real_truth, shape_orig, order='F')
+            errors = np.reshape(errors, shape_orig, order='F')
 
-    if invType is 'bayesian':
-        if prior is None:
-            print "must specify a prior in order to use the Bayesian reconstruction option."
 
-        # Build a model for the data covariance.
-        covarPrior = np.diag(np.abs(prior))
-        covarData = np.dot( np.dot(A, covarPrior), A.T)* catalog.size * 1./priorNumber
-        
-        P = np.linalg.pinv(covarData)
-        Q = np.linalg.pinv(covarPrior)
-        Ainv = np.dot( np.linalg.pinv( np.dot(np.dot(A.T, P), A ) + Q ), np.dot(A.T, P) )
-
-        N_real_truth = prior + np.dot( Ainv, N_real_obs - np.dot(A,prior))
-
-        # Calculate errors.
-        Areg = np.dot( Ainv, A)
-        covar_recon = np.dot( np.dot( Areg, covarPrior ), Areg.T )
-        aa = np.dot(A.T, A)
-        aainv = np.linalg.pinv(aa)
-        g = np.trace( lambda_reg * aainv)
-        reg_err = lambda_reg / (1 + g) * np.dot( np.dot( np.dot( aainv, aainv), A.T) , N_real_obs)        
-        leakage = np.abs(np.dot(Areg, prior) - prior)
-        errors = np.sqrt( np.diag(covar_recon) ) + leakage + np.abs(reg_err)
-        
     if invType is 'mcmc':
         start, nWalkers = initializeMCMC(N_real_obs, A)
         nParams = likelihood.shape[1]
@@ -425,9 +446,13 @@ def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = N
             N_real_truth = np.mean( sampler.flatchain, axis=0 )
             errors = np.std( sampler.flatchain, axis=0 )
             sampler.reset()
+            if n_tags > 1:
+                N_real_truth =  np.reshape( N_real_truth, shape_orig, order='F')
+                errors =  np.reshape( errors, shape_orig, order='F')
+
             
 
-    truth_bins_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
+    truth_bins_centers = getBinCenters( bins = truth_bins)
 
     return N_real_truth, errors, truth_bins_centers
 

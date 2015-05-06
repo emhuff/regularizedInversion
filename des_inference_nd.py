@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import matplotlib as mpl
-mpl.use('Agg')
+#mpl.use('Agg')
 
 import argparse
 import matplotlib.pyplot as plt
@@ -20,7 +20,7 @@ def star_galaxy_inference(sim=None,des=None,truth=None,truthMatched=None, band=N
     truthTypeBins = np.array( [ 0,2, 4])
     truthBins = [truthMagBins, truthTypeBins]
     obsTags = ('mag_auto','modtype')
-    obsMagBins = np.linspace(15,24,25) #lfunc.chooseBins(catalog = des, tag = 'mag_auto')
+    obsMagBins = np.linspace(15,24.5,25) #lfunc.chooseBins(catalog = des, tag = 'mag_auto')
     obsTypeBins = np.array( [ 0,2, 4,6] )
     obsBins = [truthMagBins, truthTypeBins]
     
@@ -42,19 +42,14 @@ def star_galaxy_inference(sim=None,des=None,truth=None,truthMatched=None, band=N
     N_obs_plot,_ = np.histogramdd([des['mag_auto'],des['modtype']], bins = truthBins)
     N_sim_truth, _ = np.histogramdd([truth['mag'], truth['objtype']], bins= truthBins)
 
-    obsShape = N_sim_obs.shape
-    truthShape = N_sim_truth.shape
-    N_sim_obs_flat = np.ravel(N_sim_obs, order='F')
-    N_sim_truth_flat = np.ravel(N_sim_truth, order='F')
-    A = L.copy()
-    lambda_reg = 0.0001
-    Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(N_sim_truth_flat.size ) ), A.T)
-    #Ainv = np.linalg.pinv(A)
-    N_est_flat = np.dot(Ainv, N_sim_obs_flat)
-    N_est = np.reshape(N_est_flat, truthShape, order='F')
+    N_est, errs, _ = lfunc.doInference( catalog = des, likelihood = L, obs_bins = obsBins, truth_bins = truthBins,
+                                          tag = obsTags, lambda_reg = 0.001)
+
     fig,ax = plt.subplots()
-    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,0],'--', label='galaxies (est.)')
-    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,1],'--', label = 'stars (est)')
+    # For plotting purposes, clip the errors to exclude values <= 0
+    errs = np.clip( errs, 0, N_est-1e-6)
+    ax.errorbar( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,0], errs[:,0],linestyle= '--', label='galaxies (est.)')
+    ax.errorbar( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,1], errs[:,0],linestyle= '--', label = 'stars (est)')
     ax.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,0], '.', label='galaxies (obs.)')
     ax.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,1], '.', label='stars (obs.)')
     N_gal_hist, _ = np.histogram(truth['mag'][truth['objtype'] == 1],bins=truthMagBins)
@@ -63,7 +58,7 @@ def star_galaxy_inference(sim=None,des=None,truth=None,truthMatched=None, band=N
     ax.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2., N_star_hist, label='stars (true)')
     ax.legend(loc='best')
     ax.set_yscale('log')
-    ax.set_ylim([1,2.*np.max(N_sim_truth)])
+    ax.set_ylim([1,2.*np.max(N_gal_hist)])
     fig.savefig("nd-reconstruction_mag_stellarity-"+band+".png")
     fig.show()
 
@@ -73,7 +68,6 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
     truthTags = ('mag','radius')
     obsTags = ('mag_auto','flux_radius')
 
-    
     obsMagBins = np.linspace(15,24.,30)
     truthMagBins = np.linspace(15,25.,30)
     obsSizeBins = np.linspace(0., 5., 30)
@@ -99,19 +93,14 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
     fig.savefig("nd-likelihood_test-mag_size.png")
     fig.show()
 
-    N_sim_truth, _ = np.histogramdd([truth['mag'], truth['radius']], bins= truthBins)
-    N_obs,   _ = np.histogramdd([des['mag_auto'],des['flux_radius']], bins = obsBins)
+    N_sim_truth, _ = np.histogramdd([truth['mag'], truth['radius']], bins = truthBins )
     N_obs_plot,  _ = np.histogramdd([des['mag_auto'],des['flux_radius']], bins = truthBins)
-    truthShape = N_sim_truth.shape
-    N_obs_flat = np.ravel(N_obs, order='F')
-    N_sim_truth_flat = np.ravel(N_sim_truth, order='F')
+    N_est, errs, _ = lfunc.doInference( catalog = des, likelihood = L, obs_bins = obsBins, truth_bins = truthBins,
+                                          tag = obsTags, lambda_reg = 0.01, prior = N_sim_truth)
 
+    
     A = L.copy()
     lambda_reg = 0.01
-    Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(N_sim_truth_flat.size ) ), A.T)
-    #N_est_flat = np.dot(Ainv, N_obs_flat)
-    N_est_flat = N_sim_truth_flat + np.dot(Ainv, N_obs_flat - np.dot(L, N_sim_truth_flat) )
-    N_est = np.reshape(N_est_flat, truthShape, order='F')
     
     fig, ( (ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2,ncols=3,figsize=(19,13))
     ax1.set_xlabel('size (arcsec)')
@@ -123,24 +112,26 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
 
     im3 = ax3.imshow(np.arcsinh(N_obs_plot/0.01),origin='lower',cmap=plt.cm.Greys, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto')
     ax3.set_title('uncorrected observations')
-    im5 = ax4.imshow(np.arcsinh(( N_est / N_sim_truth-1 )),origin='lower',cmap=plt.cm.seismic, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=5, vmin = -5)
-    ax5.set_title('reconstr. / truth -1 \n (frac. residuals)')
-
-    
-    im6 = ax6.imshow(np.arcsinh(( N_obs_plot / N_sim_truth-1 )),origin='lower',cmap=plt.cm.seismic, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=5, vmin = -5)
-    ax6.set_title('observed / truth -1 \n (frac. residuals)')
+    im4 = ax4.imshow(np.arcsinh(( N_est / N_sim_truth-1 )),origin='lower',cmap=plt.cm.seismic, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=1, vmin = -1)
+    ax4.set_title('reconstr. / truth -1 \n (frac. residuals)')
+    im5 = ax5.imshow( ( ( N_est - N_sim_truth ) / errs ), origin='lower',cmap=plt.cm.seismic, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=1, vmin = -1)
+    ax5.set_title( '( reconstr. - truth) / err. \n (significance of residuals)')
+    im6 = ax6.imshow(np.abs(( N_est / errs )),origin='lower',cmap=plt.cm.Greys, extent = [truthSizeBins_cen[0],truthSizeBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto',vmin=0,vmax=3)
+    ax6.set_title('reconstr. / errors \n ( significance )')
     fig.colorbar(im1,ax=ax1)
     fig.colorbar(im2,ax=ax2)
     fig.colorbar(im3,ax=ax3)
+    fig.colorbar(im4,ax=ax4)
     fig.colorbar(im5,ax=ax5)
     fig.colorbar(im6,ax=ax6)
     fig.savefig('nd-reconstruction_des-mag_size-'+band+'.png')
     fig.show()
 
-    
+
 def populateMapStellarity(catalog = None, sim=None, truth=None, truthMatched=None, band=None,
                 HEALConfig = None, pcaBasis = None, obs_bins = None, truth_bins = None,
-                magrange =[22.5,24.], stellarity = 0, doplot = False, n_component = 4, prior = None):
+                magrange =[22.5,24.], stellarity = 0, doplot = False, n_component = 8, prior = None):
+    
     useInds = np.unique(catalog['HEALIndex'])
     mapIndices = np.arange(hp.nside2npix(HEALConfig['out_nside']))
     theMap = np.zeros(mapIndices.size) + hp.UNSEEN
@@ -148,26 +139,15 @@ def populateMapStellarity(catalog = None, sim=None, truth=None, truthMatched=Non
     theMapRaw = np.zeros(mapIndices.size) + hp.UNSEEN
     theMapObs =  np.zeros(mapIndices.size) + hp.UNSEEN
 
-    pcaRecon = np.zeros( (truth_bins.size-1, useInds.size) )
-    pcaReconErr = np.zeros( (truth_bins.size-1, useInds.size) )
-    rawRecon = np.zeros( (truth_bins.size-1, useInds.size) )
-    rawReconErr = np.zeros( (truth_bins.size-1, useInds.size) )
+    pcaRecon = np.zeros( (truth_bins[0].size-1, useInds.size) )
+    pcaReconErr = np.zeros( (truth_bins[0].size-1, useInds.size) )
+    rawRecon = np.zeros( (truth_bins[0].size-1, useInds.size) )
+    rawReconErr = np.zeros( (truth_bins[0].size-1, useInds.size) )
     coeff = np.zeros( (n_component, useInds.size) )
     
-    # Which bins do we sum over in the end?
-    truth_mag_bins = truth_bins[stellarity]
-    obs_mag_Bins = obs_bins[stellarity]
-    truth_bin_indices = np.arange(truth_bins.size-1)[np.where((truth_mag_bins[0:-1] <= np.max(magrange)) & 
-                                                              (truth_mag_bins[1:] >= np.min(magrange) ) )]
-    obs_bin_indices = np.arange(obs_bins.size-1)[np.where((obs_bins[0:-1] <= np.max(magrange)) & 
-                                                              (obs_bins[1:] >= np.min(magrange) ) )]
+    N_truth,_  = np.histogramdd( [ truth['mag'], truth['objtype'] ], bins = truth_bins )
+    N_truth = N_truth * 1./( truth.size )
 
-
-    N_truth,_  = np.histogramdd( [ truth['mag'], truth['stellarity'] ], bins = truth_bins )
-    N_truth = N_truth * 1./( truth.size )y
-
-
-        
     print "Starting mapmaking..."
     for i, hpInd in zip(xrange(useInds.size), useInds):
         thisSim = sim[sim['HEALIndex'] == hpInd]
@@ -181,7 +161,7 @@ def populateMapStellarity(catalog = None, sim=None, truth=None, truthMatched=Non
                                            truth=thisTruth, 
                                            truthMatched =thisMatched,
                                            obs_bins = obs_bins, truth_bins = truth_bins, 
-                                           simTag = 'mag_auto', truthTag = 'mag')
+                                           simTag = ['mag_auto','modtype'], truthTag = ['mag','objtype'])
         print "   fitting likelihood to largest PCA components..."
         Lpca, thisCoeff = lfunc.doLikelihoodPCAfit(pcaComp = pcaBasis,
                                                    likelihood = Lraw,
@@ -189,50 +169,33 @@ def populateMapStellarity(catalog = None, sim=None, truth=None, truthMatched=Non
                                                    Lcut = 1e-3, Ntot = thisSim.size)
         print "   performing regularized inversion..."
         scaledPrior = prior * thisTruth.size
-        this_N_truth, _ = np.histogramdd([thisTruth['mag'], thisTruth['radius']], bins= truthBins)
-        this_N_obs,   _ = np.histogramdd([thisDES['mag_auto'],thisDES['flux_radius']], bins = obsBins)
-        this_N_obs_plot,  _ = np.histogramdd([thisDES['mag_auto'],thisDES['flux_radius']], bins = truthBins)
-        truthShape = N_sim_truth.shape
-        N_obs_flat = np.ravel(N_obs, order='F')
-        N_sim_truth_flat = np.ravel(scaledPrior, order='F')
 
-        A = L.copy()
-        lambda_reg = 0.01
-        Ainv = np.dot( np.linalg.pinv(np.dot(A.T, A) + lambda_reg * np.identity(N_sim_truth_flat.size ) ), A.T)
-        #N_est_flat = np.dot(Ainv, N_obs_flat)
-        N_est_flat = N_sim_truth_flat + np.dot(Ainv, N_obs_flat - np.dot(A, N_sim_truth_flat) )
-        N_est = np.reshape(N_est_flat, truthShape, order='F')
-        this_recon = N_est[:,stellarity]
+        truth_mag_bin_indices = ( truth_bins[0] >= np.min(magrange) ) & ( truth_bins[0] <= np.max(magrange))
+        obs_mag_bin_indices   = ( obs_bins[0] >= np.min(magrange) ) & ( obs_bins[0] <= np.max(magrange))
         
-        #this_recon, this_err , _ = lfunc.doInference(catalog = thisDES, likelihood = Lpca, 
-        #                                             obs_bins=obs_bins, truth_bins = truth_bins,
-        #                                             lambda_reg = 1e-2, invType = 'tikhonov',
-        #                                             prior = scaledPrior, priorNumber = sim.size)
+        this_recon, this_err , _ = lfunc.doInference(catalog = thisDES, likelihood = Lpca, 
+                                                     obs_bins=obs_bins, truth_bins = truth_bins,
+                                                     lambda_reg = 1e-2, invType = 'tikhonov',
+                                                     tag = ['mag_auto','modtype'],
+                                                     prior = scaledPrior, priorNumber = sim.size)
     
-    
-        pcaRecon[:, i] = this_recon.copy() * 1./(thisTruth.size)
-        #pcaReconErr[:,i] = this_err.copy() * 1./(thisTruth.size)
+        
+        pcaRecon[:, i] = this_recon[:,stellarity].copy() * 1./(thisTruth.size)
+        pcaReconErr[:,i] = this_err[:,stellarity].copy() * 1./(thisTruth.size)
         coeff[:,i] = thisCoeff
-        wt = 1.#/this_err[truth_bin_indices]**2
-        theMap[hpInd] = np.sum(this_recon[truth_bin_indices] * wt) / np.sum(wt) * 1. / (thisTruth.size)
-        #theMapErr[hpInd] = np.sqrt(np.sum(this_err[truth_bin_indices]**2)) * 1./thisTruth.size
+        wt = 1./this_err[truth_mag_bin_indices, stellarity]**2
+        theMap[hpInd] = np.sum(this_recon[truth_mag_bin_indices, stellarity] * wt) / np.sum(wt) * 1. / (thisTruth.size)
+        theMapErr[hpInd] = np.sqrt(np.sum(this_err[truth_mag_bin_indices, stellarity]**2)) * 1./thisTruth.size
 
-        N_obs,_ = np.histogram(thisDES['mag_auto'], bins=truth_bins)
+        N_obs,_ = np.histogramdd([thisDES['mag_auto'], thisDES['modtype']], bins=truth_bins)
         N_obs = N_obs * 1./thisTruth.size
-        rawRecon[:,i] = N_obs
+        rawRecon[:,i] = N_obs[:,stellarity]
         
-        theMapObs[hpInd] = np.sum(N_obs[obs_bin_indices])
-        truth_bin_centers = (truth_bins[0:-1] + truth_bins[1:])/2.
+        theMapObs[hpInd] = np.sum(N_obs[obs_mag_bin_indices, stellarity])
+        truth_bin_centers = (truth_bins[0][0:-1] + truth_bins[0][1:])/2.
+            
         print " HEALPixel, observed number,  reconstructed number ) = ", hpInd, theMapObs[hpInd], theMap[hpInd]
 
-    print "sub-sampling catalog for visualization purposes..."
-    sample = catalog[np.random.choice(catalog.size, size=10000,replace=False)]
-    print "Making map polygons"
-    poly, vertices = makeMapPolygons(theMap = theMap, N_recon = pcaRecon, N_recon_err=None, N_raw = rawRecon,
-                           bin_centers = truth_bin_centers, HEALConfig = HEALConfig, vmin = -2., vmax = 2.)
-    #print "Building combined map+histogram plots"
-    #mapHistogramPlots(poly = poly, theMap = theMap, N_recon = pcaRecon, N_recon_err=pcaReconErr, N_raw = rawRecon, band=band,
-    #                   bin_centers = truth_bin_centers, HEALConfig = HEALConfig, vertices=vertices, N_truth = N_truth,catalog=sample)
     
     return theMap, theMapObs, coeff
     
@@ -247,6 +210,7 @@ def star_galaxy_maps(sim=None,des=None,truth=None,truthMatched=None, band=None, 
     obsMagBins = np.linspace(15,24,25) #lfunc.chooseBins(catalog = des, tag = 'mag_auto')
     obsTypeBins = np.array( [ 0,2, 4,6] )
     obsBins = [truthMagBins, truthTypeBins]
+    n_component = 8
 
 
     print "Building HEALPixel likelihood matrices for pca basis."
@@ -257,6 +221,8 @@ def star_galaxy_maps(sim=None,des=None,truth=None,truthMatched=None, band=None, 
     truth = cfunc.HealPixifyCatalogs(catalog=truth, healConfig=healConfig, ratag='ra', dectag = 'dec')
     truthMatched = cfunc.HealPixifyCatalogs(catalog=truthMatched, healConfig=healConfig, ratag='ra', dectag = 'dec')
 
+    N_sim_truth, _ = np.histogramdd([truth['mag'], truth['objtype']], bins = truthBins)
+    N_sim_truth = N_sim_truth * 1./truth.size
     
     Likelihoods, HEALPixels, masterLikelihood, truth_bins, obs_bins = lfunc.getAllLikelihoods(truth=truth, 
                                                                                               sim=sim,
@@ -269,7 +235,7 @@ def star_galaxy_maps(sim=None,des=None,truth=None,truthMatched=None, band=None, 
                                                                                               truthTag = truthTags,
                                                                                               getBins = True,
                                                                                               doplot = False)
-    Lpca, pcaEigen = lfunc.likelihoodPCA(likelihood = Likelihoods, doplot=True, band=band, extent = None)
+    Lpca, pcaEigen = lfunc.likelihoodPCA(likelihood = Likelihoods, doplot=False, band=band, extent = None)
     print "Re-fitting primary principal components to master likelihood"
     LmasterPCA, coeffMaster = lfunc.doLikelihoodPCAfit(pcaComp = Lpca,
                                                        likelihood =masterLikelihood,
@@ -282,78 +248,30 @@ def star_galaxy_maps(sim=None,des=None,truth=None,truthMatched=None, band=None, 
     truth = cfunc.HealPixifyCatalogs(catalog=truth, healConfig=healConfig, ratag='ra', dectag = 'dec')
     truthMatched = cfunc.HealPixifyCatalogs(catalog=truthMatched, healConfig=healConfig, ratag='ra', dectag = 'dec')
 
-    Likelihoods, HEALPixels, masterLikelihood, truth_bins, obs_bins = lfunc.getAllLikelihoods(truth=truth, 
-                                                                                              sim=sim,
-                                                                                              truthMatched = truthMatched,
-                                                                                              healConfig=healConfig,
-                                                                                              obs_bins = obsBins,
-                                                                                              truth_bins = truthBins,
-                                                                                              ncut = 0.,
-                                                                                              obsTag = obsTags,
-                                                                                              truthTag = truthTags,
-                                                                                              getBins = True,
-                                                                                              doplot = False)
-    print "Populating maps with HEALPixel reconstructions"
-
-    theMap, theMapObs, coeff = populateMapStellarity(catalog = des, sim=sim, truth=truth, truthMatched=truthMatched,
-                                                     HEALConfig = HEALConfig, pcaBasis = Lpca, obs_bins = obsBins,
-                                                     prior = N_prior_tik,
-                                                     truth_bins = truthBins, n_component = n_component, band=band)
+    theMap, theMapObs, coeff = populateMapStellarity(catalog = des, sim= sim, truth=truth, truthMatched=truthMatched, band=band,
+                                                     HEALConfig = healConfig, pcaBasis = Lpca, obs_bins = obsBins, truth_bins = truthBins,
+                                                     magrange =[22.5,24.], stellarity = 0,  n_component = 8,
+                                                     prior = N_sim_truth)
+    seen = theMap != hp.UNSEEN
+    deltaMap = theMap * 0. + hp.UNSEEN
+    deltaObs = theMapObs * 0. + hp.UNSEEN
+    deltaMap[seen] = theMap[seen] / np.median(theMap[seen]) - 1
+    deltaObs[seen] = theMapObs[seen] / np.median(theMapObs[seen]) - 1
+    mapfunc.visualizeHealPixMap(deltaMap, nest=True, title="delta-galaxies-recon"+band, vmin = -1, vmax = 1)
+    mapfunc.visualizeHealPixMap(deltaObs, nest=True, title="delta-galaxies-raw"+band, vmin = -1, vmax = 1)
     
-    fig,ax = plt.subplots()
-    pix = theMap[theMap != hp.UNSEEN]
-    dpix = pix - np.median(pix)
-    for i in np.arange(n_component):
-        ax.plot(coeff[i,:],dpix,'.',label=str(i),alpha=0.5)
-    ax.legend(loc='best')
-    ax.set_ylim([-1,1])
-    fig.savefig("pcaCoeffInfluence-"+band+".png")
-    
-    print "Building (and writing) HEALPixel reconstruction visualizations..."    
-    mapfunc.visualizeHealPixMap(theMap, nest=True, title= "pca-mapRecon-"+band, vmin=-1, vmax = 1)
-    deltaMap = theMap.copy()
-    seen = (theMap != hp.UNSEEN)
-    deltaMap[seen] = theMap[seen] / np.median(theMap[seen]) - 1.
-    mapfunc.visualizeHealPixMap(deltaMap, nest=True, title= "pca-mapReconDelta-"+band, vmin = -1, vmax=1)
+    theMap, theMapObs, coeff = populateMapStellarity(catalog = des, sim= sim, truth=truth, truthMatched=truthMatched, band=band,
+                                                     HEALConfig = healConfig, pcaBasis = Lpca, obs_bins = obsBins, truth_bins = truthBins,
+                                                     magrange =[22.5,24.], stellarity = 1,  n_component = 8,
+                                                     prior = N_sim_truth)
+    seen = theMap != hp.UNSEEN
+    deltaMap = theMap * 0. + hp.UNSEEN
+    deltaObs = theMapObs * 0. + hp.UNSEEN
+    deltaMap[seen] = theMap[seen] / np.median(theMap[seen]) - 1
+    deltaObs[seen] = theMapObs[seen] / np.median(theMapObs[seen]) - 1
+    mapfunc.visualizeHealPixMap(deltaMap, nest=True, title="delta-stars-recon-"+band, vmin = -2, vmax = 2)
+    mapfunc.visualizeHealPixMap(deltaObs, nest=True, title="delta-stars-raw-"+band, vmin = -2, vmax = 2)
 
-    mapfunc.visualizeHealPixMap(theMapObs, nest=True, title= "mapRecon-"+band, vmin = -1., vmax = 1.)
-    mapfunc.visualizeHealPixMap(theMapObs, nest=True, title= "mapRecon_zoomed-"+band, vmin = -.1, vmax = .1)
-
-    deltaMapObs = theMapObs.copy()
-    deltaMapObs[seen] = theMapObs[seen]/np.median(theMapObs[seen]) - 1.
-    mapfunc.visualizeHealPixMap(deltaMapObs, nest=True, title="mapObsDelta-"+band, vmin = -1., vmax = 1.)
-    fig, ax = plt.subplots()
-    ax.hist(deltaMap[seen & np.isfinite(deltaMap)],bins=100)
-    ax.set_xlabel('pca map overdensity')
-    ax.set_ylabel('Number of HEALPixels')
-    fig.savefig("pca-mapRecon-hist-"+band+".png")
-    print "Making maps of pca 0 and 1"
-    coeff0Map = np.zeros(theMap.size) + hp.UNSEEN
-    coeff1Map = np.zeros(theMap.size) + hp.UNSEEN
-    coeff2Map = np.zeros(theMap.size) + hp.UNSEEN
-    coeff3Map = np.zeros(theMap.size) + hp.UNSEEN
-    coeff0Map[seen] = coeff[0,:]
-    coeff1Map[seen] = coeff[1,:]
-    coeff2Map[seen] = coeff[2,:]
-    coeff3Map[seen] = coeff[3,:]
-    mapfunc.visualizeHealPixMap(coeff0Map, nest=True, title='pca0-'+band)
-    mapfunc.visualizeHealPixMap(coeff1Map, nest=True, title='pca1-'+band)
-    mapfunc.visualizeHealPixMap(coeff2Map, nest=True, title='pca2-'+band)
-    mapfunc.visualizeHealPixMap(coeff3Map, nest=True, title='pca3-'+band)
-
-    fig, ax = plt.subplots()
-    ax.plot(coeff0Map[seen]-np.mean(coeff0Map[seen]), deltaMap[seen],'.',label='PC0')
-    ax.plot(coeff1Map[seen]-np.mean(coeff1Map[seen]), deltaMap[seen],'.',label='PC1',alpha=0.6)
-    ax.plot(coeff2Map[seen]-np.mean(coeff2Map[seen]), deltaMap[seen],'.',label='PC2', alpha=0.3)
-    ax.plot(coeff3Map[seen]-np.mean(coeff3Map[seen]), deltaMap[seen],'.',label='PC3', alpha = 0.25)
-    ax.legend(loc='best')
-    fig.savefig('pca-density-'+band+'.png')
-    print "Done."
-
-    esutil.io.write('pca-mapRecon-'+band+'.fits',theMap)
-    esutil.io.write('mapObs-i'+band+'.fits',theMapObs)
-
-    stop
 
 
 def main(argv):
