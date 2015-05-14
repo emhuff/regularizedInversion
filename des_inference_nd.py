@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import matplotlib as mpl
-#mpl.use('Agg')
+mpl.use('Agg')
 
 import argparse
 import matplotlib.pyplot as plt
@@ -12,7 +12,6 @@ import numpy as np
 import healpy as hp
 import esutil
 
-
 def star_galaxy_inference(sim=None,des=None,truth=None,truthMatched=None, band=None):
     # Choose the quantities to reconstruct.
     truthTags = ('mag','objtype')
@@ -22,7 +21,7 @@ def star_galaxy_inference(sim=None,des=None,truth=None,truthMatched=None, band=N
     obsTags = ('mag_auto','modtype')
     obsMagBins = np.linspace(15,24.5,25) #lfunc.chooseBins(catalog = des, tag = 'mag_auto')
     obsTypeBins = np.array( [ 0,2, 4,6] )
-    obsBins = [truthMagBins, truthTypeBins]
+    obsBins = [obsMagBins, obsTypeBins]
     
     
     # Measure the global likelihood function.
@@ -63,6 +62,57 @@ def star_galaxy_inference(sim=None,des=None,truth=None,truthMatched=None, band=N
     fig.show()
 
 
+def size_stellarity_inference(sim=None,des=None,truth=None,truthMatched=None, band=None):
+    # Choose the quantities to reconstruct.
+    truthTags = ('radius','objtype')
+    truthSizeBins = np.logspace(0,5,25)#lfunc.chooseBins(catalog = truthMatched, tag = 'mag')
+    truthTypeBins = np.array( [ 0,2, 4])
+    truthBins = [truthSizeBins, truthTypeBins]
+    obsTags = ('flux_radius','modtype')
+    obsSizeBins = np.linspace(0,5,25) #lfunc.chooseBins(catalog = des, tag = 'mag_auto')
+    obsTypeBins = np.array( [ 0,2, 4,6] )
+    obsBins = [obsSizeBins, obsTypeBins]
+    
+    
+    # Measure the global likelihood function.
+    print "Making global likelihood function."
+    L = lfunc.makeLikelihoodMatrix( sim= sim, truth=truth, truthMatched = truthMatched, Lcut = 0., ncut = 0.,
+                                    obs_bins = obsBins, truth_bins = truthBins, simTag = obsTags, truthTag = truthTags)
+    fig, ax = plt.subplots()
+    im = ax.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    ax.set_xlabel('truth size/stellarity')
+    ax.set_ylabel('obs size/stellarity')
+    fig.savefig("des_size-stellarity_likelihood-"+band+".png")
+    fig.colorbar(im,ax = ax)
+    fig.show()
+    
+    # Do the inversion inference.
+    N_sim_obs, _ = np.histogramdd([des['flux_radius'],des['modtype']], bins = obsBins)
+    N_obs_plot,_ = np.histogramdd([des['flux_radius'],des['modtype']], bins = truthBins)
+    N_sim_truth, _ = np.histogramdd([truth['radius'], truth['objtype']], bins= truthBins)
+
+    N_est, errs, _ = lfunc.doInference( catalog = des, likelihood = L, obs_bins = obsBins, truth_bins = truthBins,
+                                          tag = obsTags, lambda_reg = 0.001)
+
+    fig,ax = plt.subplots()
+    # For plotting purposes, clip the errors to exclude values <= 0
+    errs = np.clip( errs, 0, N_est-1e-6)
+    ax.errorbar( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,0], errs[:,0],linestyle= '--', label='galaxies (est.)')
+    ax.errorbar( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,1], errs[:,0],linestyle= '--', label = 'stars (est)')
+    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,0], '.', label='galaxies (obs.)')
+    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,1], '.', label='stars (obs.)')
+    N_gal_hist, _ = np.histogram(truth['radius'][truth['objtype'] == 1],bins=truthMagBins)
+    N_star_hist, _ = np.histogram(truth['radius'][truth['objtype'] == 3], bins=truthMagBins)
+    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_gal_hist  , label='galaxies (true)')
+    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2., N_star_hist, label='stars (true)')
+    ax.legend(loc='best')
+    ax.set_yscale('log')
+    ax.set_ylim([1,2.*np.max(N_gal_hist)])
+    fig.savefig("nd-reconstruction_size_stellarity-"+band+".png")
+    fig.show()
+
+
+    
 def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None):
     
     truthTags = ('mag','radius')
@@ -70,8 +120,8 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
 
     obsMagBins = np.linspace(15,24.,30)
     truthMagBins = np.linspace(15,25.,30)
-    obsSizeBins = np.linspace(0., 5., 30)
-    truthSizeBins = np.linspace(0.,5., 30)
+    obsSizeBins = np.insert(-0.2, 1, np.logspace(-.3, 2., 30)) 
+    truthSizeBins = np.insert(-0.2, 1, np.logspace(-2, 1.5, 30)) 
 
     obsMagBins_cen = ( obsMagBins[0:-1] + obsMagBins[1:] )/2.
     truthMagBins_cen = ( truthMagBins[0:-1] + truthMagBins[1:] ) /2.
@@ -90,7 +140,7 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
     ax2.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
     ax2.set_xlabel('truth mag/size')
     ax2.set_ylabel('obs mag/size')
-    fig.savefig("nd-likelihood_test-mag_size.png")
+    fig.savefig("nd-likelihood_test-mag_size"+band+".png")
     fig.show()
 
     N_sim_truth, _ = np.histogramdd([truth['mag'], truth['radius']], bins = truthBins )
@@ -124,13 +174,13 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
     fig.colorbar(im4,ax=ax4)
     fig.colorbar(im5,ax=ax5)
     fig.colorbar(im6,ax=ax6)
-    fig.savefig('nd-reconstruction_des-mag_size-'+band+'.png')
+    fig.savefig('nd-des-recon-mag_size-'+band+'.png')
     fig.show()
 
 
 def populateMapStellarity(catalog = None, sim=None, truth=None, truthMatched=None, band=None,
                 HEALConfig = None, pcaBasis = None, obs_bins = None, truth_bins = None,
-                magrange =[22.5,24.], stellarity = 0, doplot = False, n_component = 8, prior = None):
+                magrange =[19.5,23.], stellarity = 0, doplot = False, n_component = 8, prior = None):
     
     useInds = np.unique(catalog['HEALIndex'])
     mapIndices = np.arange(hp.nside2npix(HEALConfig['out_nside']))
@@ -234,8 +284,8 @@ def star_galaxy_maps(sim=None,des=None,truth=None,truthMatched=None, band=None, 
                                                                                               obsTag = obsTags,
                                                                                               truthTag = truthTags,
                                                                                               getBins = True,
-                                                                                              doplot = False)
-    Lpca, pcaEigen = lfunc.likelihoodPCA(likelihood = Likelihoods, doplot=False, band=band, extent = None)
+                                                                                              doplot = True)
+    Lpca, pcaEigen = lfunc.likelihoodPCA(likelihood = Likelihoods, doplot=True, band=band, extent = None)
     print "Re-fitting primary principal components to master likelihood"
     LmasterPCA, coeffMaster = lfunc.doLikelihoodPCAfit(pcaComp = Lpca,
                                                        likelihood =masterLikelihood,
@@ -257,8 +307,8 @@ def star_galaxy_maps(sim=None,des=None,truth=None,truthMatched=None, band=None, 
     deltaObs = theMapObs * 0. + hp.UNSEEN
     deltaMap[seen] = theMap[seen] / np.median(theMap[seen]) - 1
     deltaObs[seen] = theMapObs[seen] / np.median(theMapObs[seen]) - 1
-    mapfunc.visualizeHealPixMap(deltaMap, nest=True, title="delta-galaxies-recon"+band, vmin = -1, vmax = 1)
-    mapfunc.visualizeHealPixMap(deltaObs, nest=True, title="delta-galaxies-raw"+band, vmin = -1, vmax = 1)
+    mapfunc.visualizeHealPixMap(deltaMap, nest=True, title="delta-galaxies-recon-"+band, vmin = -1, vmax = 1)
+    mapfunc.visualizeHealPixMap(deltaObs, nest=True, title="delta-galaxies-raw-"+band, vmin = -1, vmax = 1)
     
     theMap, theMapObs, coeff = populateMapStellarity(catalog = des, sim= sim, truth=truth, truthMatched=truthMatched, band=band,
                                                      HEALConfig = healConfig, pcaBasis = Lpca, obs_bins = obsBins, truth_bins = truthBins,
@@ -272,8 +322,99 @@ def star_galaxy_maps(sim=None,des=None,truth=None,truthMatched=None, band=None, 
     mapfunc.visualizeHealPixMap(deltaMap, nest=True, title="delta-stars-recon-"+band, vmin = -2, vmax = 2)
     mapfunc.visualizeHealPixMap(deltaObs, nest=True, title="delta-stars-raw-"+band, vmin = -2, vmax = 2)
 
+    fig, ax = plt.subplots(nrows=1, ncols=2)
+    
+    for i in xrange(8):
+        coeffMap = np.zeros(theMap.size) + hp.UNSEEN
+        coeffMap[seen] = coeff[i,:]
+        mapfunc.visualizeHealPixMap(coeff0Map, nest=True, title='pca'+str(i)+'-'+band)
+        esutil.io.write('pca'+str(i)+'-mapRecon-'+band+'.fits',coeffMap)
+    
+    
+
+def color_match(sim1=None, des1=None, truth1=None, truthMatched1=None, band = None):
+    des, sim, truthMatched, truth = cfunc.getStellarityCatalogs(reload = args.reload, band = args.filter)
+    truth = truth[truth['mag'] > 15.]
+    des =des[( des['mag_auto'] > 15.) & (des['flux_radius'] > 0) & (des['flux_radius'] < 10.)] 
+    keep = (sim['mag_auto'] > 15.) & (truthMatched['mag'] > 0.) & (sim['flux_radius'] > 0) & (sim['flux_radius'] < 10.)
+    sim = sim[keep]
+    truthMatched = truthMatched[keep]
+
+    
+    des = esutil.numpy_util.add_fields(des,('color',des['mag_auto'].dtype))
+    
+    
+    ind1, ind2 = esutil.numpy_util.match(sim1['balrog_index'], sim['balrog_index'])
+    
+
+    
+
+def color_mag_inference(sim=None,des=None,truth=None,truthMatched=None, band1=None, band2 = None):
+    
+    truthTags = ('mag','color')
+    obsTags = ('mag_auto','color_auto')
+
+    obsMagBins = np.linspace(15,24.,20)
+    truthMagBins = np.linspace(15,25.,20)
+    obsColorBins = np.linspace(-3, 3., 20)
+    truthColorBins = np.linspace(-3,3., 20)
+
+    obsMagBins_cen = ( obsMagBins[0:-1] + obsMagBins[1:] )/2.
+    truthMagBins_cen = ( truthMagBins[0:-1] + truthMagBins[1:] ) /2.
+    obsColorBins_cen = ( obsColorBins[0:-1] + obsColorBins[1:] ) / 2.
+    truthColorBins_cen = ( truthColorBins[0:-1] + truthColorBins[1:] ) /2.
+
+    
+    truthBins = [truthMagBins, truthColorBins]
+    obsBins = [obsMagBins, obsColorBins]
 
 
+    L = lfunc.makeLikelihoodMatrix(sim= sim, truth=truth, truthMatched = truthMatched,
+                                     obs_bins = obsBins, truth_bins = truthBins, simTag = obsTags,
+                                     truthTag = truthTags)
+    fig, ax2 = plt.subplots(nrows = 1, ncols = 1)
+    ax2.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    ax2.set_xlabel('truth mag/color')
+    ax2.set_ylabel('obs mag/color')
+    fig.savefig("nd-likelihood_test-mag_color.png")
+    fig.show()
+
+    N_sim_truth, _ = np.histogramdd([truth['mag'], truth['color']], bins = truthBins )
+    N_obs_plot,  _ = np.histogramdd([des['mag_auto'],des['color_auto']], bins = truthBins)
+    N_est, errs, _ = lfunc.doInference( catalog = des, likelihood = L, obs_bins = obsBins, truth_bins = truthBins,
+                                          tag = obsTags, lambda_reg = 0.01, prior = N_sim_truth)
+
+    
+    A = L.copy()
+    lambda_reg = 0.01
+    
+    fig, ( (ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2,ncols=3,figsize=(19,13))
+    ax1.set_xlabel('color ('+band1+' - '+band2+')')
+    ax1.set_ylabel('mag_auto')
+    im1 = ax1.imshow(np.arcsinh(N_sim_truth/0.01),origin='lower',cmap=plt.cm.Greys, extent = [truthColorBins_cen[0],truthColorBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto')
+    ax1.set_title('truth')
+    im2 = ax2.imshow(np.arcsinh(N_est/0.01), origin='lower',cmap=plt.cm.Greys,vmin=0., extent = [truthColorBins_cen[0],truthColorBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto')
+    ax2.set_title('reconstruction')
+
+    im3 = ax3.imshow(np.arcsinh(N_obs_plot/0.01),origin='lower',cmap=plt.cm.Greys, extent = [truthColorBins_cen[0],truthColorBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto')
+    ax3.set_title('uncorrected observations')
+    im4 = ax4.imshow(np.arcsinh(( N_est / N_sim_truth-1 )),origin='lower',cmap=plt.cm.seismic, extent = [truthColorBins_cen[0],truthColorBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=1, vmin = -1)
+    ax4.set_title('reconstr. / truth -1 \n (frac. residuals)')
+    im5 = ax5.imshow( ( ( N_est - N_sim_truth ) / errs ), origin='lower',cmap=plt.cm.seismic, extent = [truthColorBins_cen[0],truthColorBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto', vmax=1, vmin = -1)
+    ax5.set_title( '( reconstr. - truth) / err. \n (significance of residuals)')
+    im6 = ax6.imshow(np.abs(( N_est / errs )),origin='lower',cmap=plt.cm.Greys, extent = [truthColorBins_cen[0],truthColorBins_cen[-1],truthMagBins_cen[0],truthMagBins_cen[-1]], aspect = 'auto',vmin=0,vmax=3)
+    ax6.set_title('reconstr. / errors \n ( significance )')
+    fig.colorbar(im1,ax=ax1)
+    fig.colorbar(im2,ax=ax2)
+    fig.colorbar(im3,ax=ax3)
+    fig.colorbar(im4,ax=ax4)
+    fig.colorbar(im5,ax=ax5)
+    fig.colorbar(im6,ax=ax6)
+    fig.savefig('nd-reconstruction_des-mag_color-'+band+'.png')
+    fig.show()
+
+
+    
 def main(argv):
     parser = argparse.ArgumentParser(description = 'Perform magnitude distribution inference on DES data.')
     parser.add_argument('filter',help='filter name',choices=['g','r','i','z','Y'])
@@ -285,7 +426,7 @@ def main(argv):
     if args.nside is not None:
         nside  = int(args.nside)
     else:
-        nside = 64
+        nside = 256
 
     healConfig = cfunc.getHealConfig(out_nside = nside)
         
@@ -296,8 +437,9 @@ def main(argv):
     sim = sim[keep]
     truthMatched = truthMatched[keep]
     #star_galaxy_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
-    #mag_size_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
-    star_galaxy_maps(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter, healConfig = healConfig)
+    mag_size_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
+    #size_stellarity_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
+    #star_galaxy_maps(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter, healConfig = healConfig)
     stop
 
 

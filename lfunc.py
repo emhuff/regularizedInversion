@@ -108,9 +108,12 @@ def makeLikelihoodMatrix( sim=None, truth=None, truthMatched = None, Lcut = 0., 
         N_truth = np.bincount(all_bin_index)
         L = np.zeros( (nbins_obs, nbins_truth) )
         for i in xrange(obs_bin_index.size):
-            if N_truth[truth_bin_index[i]] > ncut:
-                L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
-                                                            1./N_truth[truth_bin_index[i]] )
+            try:
+                if N_truth[truth_bin_index[i]] > ncut:
+                    L[obs_bin_index[i], truth_bin_index[i]] = ( L[obs_bin_index[i], truth_bin_index[i]] +
+                                                                1./N_truth[truth_bin_index[i]] )
+            except:
+                pass
         L[L < Lcut] = 0.
     return L
     
@@ -276,7 +279,7 @@ def doLikelihoodPCAfit(pcaComp = None,  likelihood =None, n_component = 5, Lcut 
     # Full least-squares, taking the covariances of the likelihood into account.
     # covar(L1d) = Ntot * np.outer( L1d, L1d)
     # in the solution, the scaling Ntot falls out. However, we do need it for getting the errors later.
-    L1dCovar = Ntot * np.outer(L1d, L1d)
+    #L1dCovar = Ntot * np.outer(L1d, L1d)
     #aa= np.linalg.pinv( np.dot( pcafit.T, np.dot(L1dCovar, pcafit)) )
     #bb =  np.dot(pcafit.T, L1dCovar)
     #coeff = np.dot( np.dot(aa,bb), L1d)
@@ -356,15 +359,15 @@ def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = N
     if type(tag) is not type(''):
         pts = [catalog[thisTag] for thisTag in tag]
         n_tags = len(tag)
+        N_real_obs, _  = np.histogramdd( pts, bins = obs_bins )
     else:
         pts = catalog[tag]
         n_tags = 1
-    
-    N_real_obs, _  = np.histogramdd( pts, bins = obs_bins )
+        N_real_obs, _  = np.histogramdd( pts, bins = obs_bins )    
     N_real_obs = N_real_obs*1.0
 
     if n_tags > 1:
-        shape_orig = N_real_obs.shape
+        shape_orig = ([len(bins)-1 for bins in truth_bins])
         N_real_obs = np.ravel( N_real_obs, order='F' )
         
     A = likelihood.copy()

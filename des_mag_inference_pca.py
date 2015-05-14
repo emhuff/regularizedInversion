@@ -12,6 +12,8 @@ import numpy as np
 import healpy as hp
 import esutil
 
+# Look at healpy.pixelfunc.ud_grade
+
 def makeMapPolygons(theMap = None, N_recon = None, N_recon_err=None, N_raw = None,
                        bin_centers = None, HEALConfig = None, vmin = -2., vmax = 2.):
 
@@ -332,7 +334,7 @@ def main(argv):
     print "Done."
 
     esutil.io.write('pca-mapRecon-'+band+'.fits',theMap)
-    esutil.io.write('mapObs-i'+band+'.fits',theMapObs)
+    esutil.io.write('mapObs-'+band+'.fits',theMapObs)
     # Wouldn't it be cool to compare to IRAS, WISE, or other similar maps for external validation?
     #wise = hp.read_map('../../Data/WISE/wssa_sample_1024.fits')
     #stop
