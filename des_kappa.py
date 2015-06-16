@@ -43,8 +43,6 @@ def kappa_est(hist_obs = None, likelihood = None, dN_dkappa = None, hist_fid = N
 
     dNobs_dkappa_flat = np.dot(likelihood, dN_dkappa_flat)
     
-
-    
     kappa = np.dot(  (hist_obs_flat - np.dot(likelihood, hist_fid_flat) ) , dNobs_dkappa_flat) / np.dot(dNobs_dkappa_flat, dNobs_dkappa_flat)
 
     if ~np.isfinite(kappa):

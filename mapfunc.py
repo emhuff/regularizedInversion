@@ -2,6 +2,19 @@ import healpy as hp
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+def make_number_map(catalog=None, healConfig = None):
+    useInds = np.unique(catalog['HEALIndex'])
+    mapIndices = np.arange(hp.nside2npix(healConfig['out_nside']))
+    num = np.zeros(mapIndices.size) + hp.UNSEEN
+    print "Starting mapmaking..."
+    for i,hpInd in zip(xrange(useInds.size), useInds):
+        num[hpInd] =  np.sum(catalog['HEALIndex'] == hpInd)
+        if (i % 100) == 0:
+            print i," of ",useInds.size
+            print num[hpInd]
+    return num
+
 def buildBadRegionMap(sim, truth, nside=4096, nest = True, magThresh=1., HPIndices=None):
     '''
     Note that here, "truth" really means "truthMatched".
@@ -30,7 +43,7 @@ def visualizeHealPixMap(theMap, nest=True, title="map", norm=None, vmin = None, 
     vertices = np.zeros( (seenInds.size, 4, 2) )
     print "Building polygons for "+str(seenInds.size)+" HEALPixels."
     for HPixel,i in zip(seenInds,xrange(seenInds.size)):
-        corners = hp.vec2ang( np.transpose(hp.boundaries(nside,HPixel,nest=True) ) )
+        corners = hp.vec2ang( np.transpose(hp.boundaries(nside,HPixel,nest=nest) ) )
         # HEALPix insists on using theta/phi; we in astronomy like to use ra/dec.
         vertices[i,:,0] = corners[1] *180./np.pi
         vertices[i,:,1] = 90.0 - corners[0] * 180/np.pi

@@ -64,12 +64,14 @@ def star_galaxy_inference(sim=None,des=None,truth=None,truthMatched=None, band=N
 
 def size_stellarity_inference(sim=None,des=None,truth=None,truthMatched=None, band=None):
     # Choose the quantities to reconstruct.
+    
+    sim[sim['modtype'] == 5]['modtype'] = 1
     truthTags = ('radius','objtype')
-    truthSizeBins = np.logspace(0,5,25)#lfunc.chooseBins(catalog = truthMatched, tag = 'mag')
+    truthSizeBins = np.insert(-0.2, 1, np.logspace(-1, 3., 30)) 
     truthTypeBins = np.array( [ 0,2, 4])
     truthBins = [truthSizeBins, truthTypeBins]
     obsTags = ('flux_radius','modtype')
-    obsSizeBins = np.linspace(0,5,25) #lfunc.chooseBins(catalog = des, tag = 'mag_auto')
+    obsSizeBins = np.insert(-0.2, 1, np.logspace(-.5, 3., 30)) 
     obsTypeBins = np.array( [ 0,2, 4,6] )
     obsBins = [obsSizeBins, obsTypeBins]
     
@@ -79,7 +81,7 @@ def size_stellarity_inference(sim=None,des=None,truth=None,truthMatched=None, ba
     L = lfunc.makeLikelihoodMatrix( sim= sim, truth=truth, truthMatched = truthMatched, Lcut = 0., ncut = 0.,
                                     obs_bins = obsBins, truth_bins = truthBins, simTag = obsTags, truthTag = truthTags)
     fig, ax = plt.subplots()
-    im = ax.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys)
+    im = ax.imshow(np.arcsinh(L/0.001), origin='lower', cmap=plt.cm.Greys, interpolation='none')
     ax.set_xlabel('truth size/stellarity')
     ax.set_ylabel('obs size/stellarity')
     fig.savefig("des_size-stellarity_likelihood-"+band+".png")
@@ -97,17 +99,17 @@ def size_stellarity_inference(sim=None,des=None,truth=None,truthMatched=None, ba
     fig,ax = plt.subplots()
     # For plotting purposes, clip the errors to exclude values <= 0
     errs = np.clip( errs, 0, N_est-1e-6)
-    ax.errorbar( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,0], errs[:,0],linestyle= '--', label='galaxies (est.)')
-    ax.errorbar( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_est[:,1], errs[:,0],linestyle= '--', label = 'stars (est)')
-    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,0], '.', label='galaxies (obs.)')
-    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:] )/2. , N_obs_plot[:,1], '.', label='stars (obs.)')
-    N_gal_hist, _ = np.histogram(truth['radius'][truth['objtype'] == 1],bins=truthMagBins)
-    N_star_hist, _ = np.histogram(truth['radius'][truth['objtype'] == 3], bins=truthMagBins)
-    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2. , N_gal_hist  , label='galaxies (true)')
-    ax.plot( (truthMagBins[0:-1] + truthMagBins[1:])/2., N_star_hist, label='stars (true)')
+    ax.errorbar( truthSizeBins[1:] , N_est[:,0], errs[:,0],linestyle= '--', label='galaxies (est.)')
+    ax.plot( truthSizeBins[1:] , N_obs_plot[:,0], '.-', label='galaxies (obs.)')
+    ax.plot(  truthSizeBins[1:] , N_obs_plot[:,1], '.-', label='stars (obs.)')
+    N_gal_hist, _ = np.histogram(truth['radius'][truth['objtype'] == 1],bins=truthSizeBins)
+    N_star_hist, _ = np.histogram(truth['radius'][truth['objtype'] == 3], bins=truthSizeBins)
+    ax.plot(  truthSizeBins[1:] , N_gal_hist  , label='galaxies (true)')
     ax.legend(loc='best')
-    ax.set_yscale('log')
-    ax.set_ylim([1,2.*np.max(N_gal_hist)])
+    ax.set_yscale('symlog')
+    ax.set_xscale('log')
+    #ax.set_xlim([1e-2,100])
+    ax.set_ylim([1e3,2.*np.max(N_gal_hist)])
     fig.savefig("nd-reconstruction_size_stellarity-"+band+".png")
     fig.show()
 
@@ -120,8 +122,8 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
 
     obsMagBins = np.linspace(15,24.,30)
     truthMagBins = np.linspace(15,25.,30)
-    obsSizeBins = np.insert(-0.2, 1, np.logspace(-.3, 2., 30)) 
-    truthSizeBins = np.insert(-0.2, 1, np.logspace(-2, 1.5, 30)) 
+    obsSizeBins = np.insert(-0.2, 1, np.logspace(-.3, 3., 40)) 
+    truthSizeBins = np.insert(-0.2, 1, np.logspace(-2, 3., 40)) 
 
     obsMagBins_cen = ( obsMagBins[0:-1] + obsMagBins[1:] )/2.
     truthMagBins_cen = ( truthMagBins[0:-1] + truthMagBins[1:] ) /2.
@@ -146,11 +148,10 @@ def mag_size_inference(sim=None,des=None,truth=None,truthMatched=None, band=None
     N_sim_truth, _ = np.histogramdd([truth['mag'], truth['radius']], bins = truthBins )
     N_obs_plot,  _ = np.histogramdd([des['mag_auto'],des['flux_radius']], bins = truthBins)
     N_est, errs, _ = lfunc.doInference( catalog = des, likelihood = L, obs_bins = obsBins, truth_bins = truthBins,
-                                          tag = obsTags, lambda_reg = 0.01, prior = N_sim_truth)
+                                          tag = obsTags, lambda_reg = 0.00001, prior = N_sim_truth)
 
     
     A = L.copy()
-    lambda_reg = 0.01
     
     fig, ( (ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2,ncols=3,figsize=(19,13))
     ax1.set_xlabel('size (arcsec)')
@@ -432,13 +433,13 @@ def main(argv):
         
     des, sim, truthMatched, truth = cfunc.getStellarityCatalogs(reload = args.reload, band = args.filter)
     truth = truth[truth['mag'] > 15.]
-    des =des[( des['mag_auto'] > 15.) & (des['flux_radius'] > 0) & (des['flux_radius'] < 10.)] 
-    keep = (sim['mag_auto'] > 15.) & (truthMatched['mag'] > 0.) & (sim['flux_radius'] > 0) & (sim['flux_radius'] < 10.)
+    des =des[( des['mag_auto'] > 15.) & (des['flux_radius'] > 0) & (des['flux_radius'] < 100.)] 
+    keep = (sim['mag_auto'] > 15.) & (truthMatched['mag'] > 0.) & (sim['flux_radius'] > 0) & (sim['flux_radius'] < 100.)
     sim = sim[keep]
     truthMatched = truthMatched[keep]
     #star_galaxy_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
-    mag_size_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
-    #size_stellarity_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
+    #mag_size_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
+    size_stellarity_inference(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter)
     #star_galaxy_maps(sim=sim,truth=truth,des=des,truthMatched=truthMatched, band=args.filter, healConfig = healConfig)
     stop
 
