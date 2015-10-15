@@ -97,6 +97,8 @@ def SimFields(band='i',table='sva1v2'):
         m.spread_model as spread_model,
         m.spreaderr_model as spreaderr_model,
         m.class_star as class_star,
+        m.mu_max as mu_max,
+        t.sersicindex_0 as sersic_index,
         m.flux_radius as flux_radius,
         m.mag_psf as mag_psf,
         t.mag as truth_mag_auto,

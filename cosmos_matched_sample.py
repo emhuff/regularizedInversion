@@ -46,7 +46,7 @@ def get_cosmos_catalogs_all():
     pass
 
 
-def get_des_truth_catalog(path = '../../Data/',  sample = 'faint'):
+def get_des_truth_catalog(path = '../../Data/',  sample = 'bright'):
     
     if sample is 'bright':
         simfile = 'sim-58-21-22.fits'
@@ -62,15 +62,17 @@ def get_des_truth_catalog(path = '../../Data/',  sample = 'faint'):
     
     return catalog
 
-def reweightCosmos(rwt_tags = None, cosmos= None, des = None):
+def reweightCosmos(rwt_tags = None, cosmos= None, des = None, sample = 'faint'):
 
+    
     if des is None:
-        des = get_des_truth_catalog()
-        #des = np.random.choice(des, size=100000)
+        des = get_des_truth_catalog(sample = sample)
     if cosmos is None:
         cosmos = get_cosmos_phot_catalog()
-        #cosmos = np.random.choice(cosmos,size=100000)
-
+        if sample is 'bright':
+            cut = ( cosmos['i_mag_auto'] < 22. ) & (cosmos['i_mag_auto'] > 21.)
+        if sample is 'faint':
+            cut = ( cosmos['i_mag_auto'] > 23. ) & (cosmos['i_mag_auto'] < 24.)
     # rwt_tags is a dictionary; the key is the field name in des, and
     # the value is the corresponding field name to match to in the
     # cosmos catalog.
@@ -89,14 +91,17 @@ def reweightCosmos(rwt_tags = None, cosmos= None, des = None):
 
     use = NP > 1
     wts = NP[use]*1./NT[use]
+
     fig,(ax1,ax2) = plt.subplots(nrows=1,ncols=2,figsize=(14,7))
-    bins = np.linspace(15,25,50)
-    ax1.hist(des['mag_i'],bins=bins,label='des truth')
-    ax1.hist(cosmos[use]['i_mag_auto'],weights=wts,bins=bins,alpha=0.33,label='cosmos reweighted')
+    bins = np.linspace(15,25,100)
+    ax1.hist(des['mag_i'],bins=bins,label='des truth', normed=True)
+    ax1.hist(cosmos[use]['i_mag_auto'],weights=wts,bins=bins,alpha=0.33,label='cosmos reweighted', normed=True)
+    ax1.hist(cosmos[cut]['i_mag_auto'],bins=bins,alpha=0.33,label='cosmos unweighted', normed=True)
     ax1.set_xlabel('i mag')
     ax1.legend(loc='best')
-    ax2.hist(des['mag_z'],bins=bins, label='des (truth)')
-    ax2.hist(cosmos[use]['z_mag'] + cosmos[use]['auto_offset'],bins=bins,weights=wts,alpha=0.33,label='cosmos reweighted')
+    ax2.hist(des['mag_z'],bins=bins, label='des (truth)', normed=True)
+    ax2.hist(cosmos[use]['z_mag'] + cosmos[use]['auto_offset'],bins=bins,weights=wts,alpha=0.33,label='cosmos reweighted', normed=True)
+    ax2.hist(cosmos[cut]['z_mag'] + cosmos[cut]['auto_offset'],bins=bins,alpha=0.33,label='cosmos unweighted', normed=True)
     ax2.set_xlabel('z mag')
     ax2.legend(loc='best')
     fig.savefig("reweighted_magnitudes-faint")
