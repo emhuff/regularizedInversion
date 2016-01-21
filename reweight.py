@@ -127,7 +127,11 @@ def main(argv):
     tril_rwt2 = tril2[keep]
 
     # Finally, do a single final perturbation step. This is the catalog we'll ultimately want to use as an input.
-    tril3 = perturb(tril_rwt2, orig_size = tril.size, sigma=0.01,tags = ['g-r','r-i','i-z'])  
+    tril3 = perturb(tril_rwt2, orig_size = tril.size, sigma=0.01,tags = ['g-r','r-i','i-z'])
+    wts3 = reweightMatch(truthSample= des, matchSample = tril3, rwt_tags = ['g-r','r-i','i-z'])
+    keep = np.random.random(tril3.size) * np.max(wts3) <= wts3
+    tril3 = tril3[keep]
+    tril3 = perturb(tril3, orig_size = tril.size, sigma=0.001, tags = ['g-r','r-i','i-z'])
     tril_out = trilStars.copy()
 
     tril_out['mag_g'] = tril3['g-r'] + tril3['r-i'] + tril3['i']

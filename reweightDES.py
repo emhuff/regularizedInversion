@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import matplotlib as mpl
-#mpl.use('Agg')
+mpl.use('Agg')
 
 import argparse
 import matplotlib.pyplot as plt
@@ -33,7 +33,7 @@ def modestify(data):
     print len(data), np.sum(galcut), np.sum(starcut), np.sum(neither)
     return data
 
-def reweightMatch(rwt_tags = None, truthSample= None, matchSample = None, N_nearest = 100):
+def reweightMatch(rwt_tags = None, truthSample= None, matchSample = None, N_nearest = 50):
 
     if rwt_tags is None:
         rwt_tags = ['','']
@@ -44,8 +44,9 @@ def reweightMatch(rwt_tags = None, truthSample= None, matchSample = None, N_near
         truthSample_arr[:,i] =  truthSample[thing]
         matchSample_arr[:,i] =  matchSample[thing]
 
-    NP = calcNN(N_nearest, truthSample_arr,matchSample_arr)
+    NP = calcNN(N_nearest, truthSample_arr, matchSample_arr)
     NT = calcNN(N_nearest, matchSample_arr, matchSample_arr)
+
 
     bad = (NP == 1)
     wts = NP * 1./NT
@@ -98,7 +99,6 @@ def getDES():
     import pyfits
     path = '../../Data/GOODS/'
     desAll = esutil.io.read(path+"des_i-griz.fits")
-    #desAll = pyfits.getdata(path+"des_i-griz.fits")
     desAll = modestify(desAll)
     desStars = desAll[desAll['modtype'] == 3]
 
@@ -107,7 +107,9 @@ def getTruthStars():
     data = esutil.io.read(path,ext=1)
     data = data[data["TRUE_CLASS"] == 1]
     #data = data[data['MAG_MODEL_I'] < 21]
-    usable_fields = [10,11,12,15,19]
+    #usable_fields = [10,11,12,15,19]
+    usable_fields = [11,12,13,14,16,17,18]
+    usable_fields = [10,11,12,13,14,15,16,17,18,19]
     cat = []
     for item in data:
         if item['FIELD'] in usable_fields:
@@ -115,12 +117,20 @@ def getTruthStars():
     cat = np.array(cat)
     return cat
 
-def getConfidenceLevels(hist):
-    h2, bins = np.histogram(hist,bins=500)
-    centers = (bins[0:-1] + bins[1:])/2.
-    c_arr = (np.cumsum(h2)*1./np.sum(h2))[::-1]
-    clevels = np.interp([0.68, 0.95], c_arr,centers)
-    stop
+def getConfidenceLevels(hist,sigma= [0.68, 0.95]):
+    lik = hist.reshape(hist.size)
+    lsort = np.sort(lik)
+    dTotal = np.sum(lsort)
+    dSum = 0.
+    nIndex = lsort.size
+    clevels = []
+    
+    for thisSigma in sigma:
+        while (dSum < dTotal * thisSigma):
+            nIndex -= 1
+            dSum += lsort[nIndex]
+        clevels.append(lsort[nIndex])
+    print clevels
     return clevels
 
 def main(argv):
@@ -128,7 +138,7 @@ def main(argv):
     #desStars = np.random.choice(desStars,size=10000)
 
     balrogStars = esutil.io.read(path+"matched_i-griz.fits")
-    desStars = getDES()
+
     #balrogStars = np.random.choice(balrogStars,size = 10000)
     desStars = getTruthStars()
     desKeep =( (desStars['MAG_AUTO_G'] < 50) & 
@@ -136,7 +146,7 @@ def main(argv):
                (desStars['MAG_AUTO_I'] < 50) & 
                (desStars['MAG_AUTO_Z'] < 50)   )
 
-    des  = np.empty(desStars.size, dtype = [('g-r',np.float),('r-i',np.float),('i-z',np.float),('i',np.float),('r',np.float),('g',np.float)])
+    des  = np.empty(desStars.size, dtype = [('g-r',np.float),('r-i',np.float),('i-z',np.float),('i',np.float),('r',np.float),('g',np.float),('z',np.float)])
     balrog = np.empty(balrogStars.size, dtype = [('g-r',np.float),('r-i',np.float),('i-z',np.float),('i',np.float)])
 
     des['g-r'] = desStars['MAG_AUTO_G'] - desStars['MAG_AUTO_R']
@@ -145,7 +155,9 @@ def main(argv):
     des['i'] = desStars['MAG_AUTO_I']
     des['g'] = desStars['MAG_AUTO_G']
     des['r'] = desStars['MAG_AUTO_R']
+    des['z'] = desStars['MAG_AUTO_Z']
     des = des[desKeep]
+    bright = (des['i'] < 22.) & (des['r'] < 22.) & ( des['g'] < 22. ) & ( des['z'] < 22. )
 
     balrog['g-r'] = balrogStars['mag_auto_g'] - balrogStars['mag_auto_r']
     balrog['r-i'] = balrogStars['mag_auto_r'] - balrogStars['mag_auto_i']
@@ -161,39 +173,56 @@ def main(argv):
 
     esutil.io.write('balrog-des-reweighted.fits',balrog_out,clobber=True)
 
-
-    fig,(ax1,ax2) = plt.subplots(nrows=1,ncols=2,figsize=(14,6))
+    fig,((ax1,ax2),(ax3,ax4)) = plt.subplots(nrows=2,ncols=2,figsize=(14,14))
     from matplotlib.colors import LogNorm, Normalize
     x_b = np.linspace(-1,3,100)
     y_b = np.linspace(-1,3,100)
     bContours, xx_b, yy_b = kdEst(balrog_out['mag_r']-balrog_out['mag_i'],balrog_out['mag_g'] - balrog_out['mag_r'],x_b,y_b)
     bLevels = getConfidenceLevels(bContours)
-    cfset = ax1.contour(xx_b, yy_b, bContours, bLevels, cmap='Blues')
+    cfset = ax1.contour(xx_b, yy_b, bContours, bLevels, zorder=2)
     
     # For labeling:
     import matplotlib.patches as mpatches
     red_patch  = mpatches.Patch(color='red', label='DES confirmed stars')
     blue_patch = mpatches.Patch(color='blue', label='deconvolved locus')
-    bright = (des['i'] < 21.) & (des['r'] < 21.) & ( des['g'] < 21. )
-    ax1.plot(des[bright]['r-i'],des[bright]['g-r'],',',lw=0,markersize=0.2,color='red',alpha=0.5)
+
+    ax1.plot(des['r-i'],des['g-r'],',',markersize=0.5,color='green')
+    ax1.plot(des[bright]['r-i'],des[bright]['g-r'],'.',lw=0,markersize=5,color='red',alpha=0.5)
     ax1.set_xlim(-1,2)
     ax1.set_ylim(-1,3)
+    ax1.legend(loc='best',handles=[red_patch,blue_patch])
     ax1.set_xlabel("r-i")
     ax1.set_ylabel("g-r")
-    ax1.legend(loc='best',handles=[red_patch,blue_patch])
     
     x_r = np.linspace(-1,3,100)
     y_r = np.linspace(-2,3,100) 
 
     rContours, xx_r, yy_r = kdEst(balrog_out['mag_i'] - balrog_out['mag_z'],balrog_out['mag_r'] - balrog_out['mag_i'],x_r,y_r)
     rLevels = getConfidenceLevels(rContours)
-    cfset = ax2.contour(xx_r, yy_r, rContours, rLevels, cmap='Blues')
-    ax2.plot(des[bright]['i-z'],des[bright]['r-i'],',',lw=0,markersize=5,color='red',alpha=0.55)
+    cfset = ax2.contour(xx_r, yy_r, rContours, rLevels, zorder=2)
+    ax2.plot(des['i-z'],des['r-i'],'.',lw=0,markersize=.5,color='green')
+    ax2.plot(des[bright]['i-z'],des[bright]['r-i'],'.',lw=0,markersize=5,color='red',alpha=0.5)
+
     ax2.set_xlim(-1,2)
     ax2.set_ylim(-1,3)
     ax2.set_ylabel("r-i")
     ax2.set_xlabel("i-z")
 
+
+    ax3.plot(balrogStars['mag_r']-balrogStars['mag_i'],balrogStars['mag_g'] - balrogStars['mag_r'],',',color='blue')
+    ax3.plot(balrog_out['mag_r']-balrog_out['mag_i'],balrog_out['mag_g'] - balrog_out['mag_r'],'.',color='red',alpha=0.75)
+    ax3.set_xlabel("r-i")
+    ax3.set_ylabel("g-r")
+    ax3.set_xlim(-1,2)
+    ax3.set_ylim(-1,3)
+
+
+    ax4.plot(balrogStars['mag_i'] - balrogStars['mag_z'],balrogStars['mag_r'] - balrogStars['mag_i'],',',color='blue')
+    ax4.plot(balrog_out['mag_i'] - balrog_out['mag_z'],balrog_out['mag_r'] - balrog_out['mag_i'],'.',color='red',alpha=0.75)
+    ax4.set_ylabel("r-i")
+    ax4.set_xlabel("i-z")
+    ax4.set_xlim(-1,2)
+    ax4.set_ylim(-1,3)
 
     fig.savefig("des_deconvolved_locus.png")
     print "(iter 1) fraction of original sample kept: ",balrog_out.size * 1./balrog.size

@@ -9,7 +9,7 @@ import healpy as hp
 import matplotlib.pyplot as plt
 from scipy.special import gammaln
 import numpy.lib.recfunctions as recfunctions
-import emcee
+
 
 
 def chooseBins(catalog = None, tag=None, binsize = None, upperLimit = None, lowerLimit = None):
@@ -425,6 +425,7 @@ def doInference(catalog = None, likelihood = None, obs_bins=None, truth_bins = N
 
 
     if invType is 'mcmc':
+        import emcee
         start, nWalkers = initializeMCMC(N_real_obs, A)
         nParams = likelihood.shape[1]
 

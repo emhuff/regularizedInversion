@@ -99,7 +99,9 @@ def SimFields(band='i',table='sva1v2'):
         m.class_star as class_star,
         m.mu_max as mu_max,
         t.sersicindex_0 as sersic_index,
+        m.disk_scale_image as disk_scale,
         m.flux_radius as flux_radius,
+        m.mag_disk as mag_disk,
         m.mag_psf as mag_psf,
         t.mag as truth_mag_auto,
         m.flags as flags
@@ -144,7 +146,9 @@ def TruthFields(band='i', table = 'sva1v2'):
         dec,
         objtype,
         HALFLIGHTRADIUS_0 as radius,
-        mag
+        mag,
+        z,
+        sersicindex_0
     FROM
         SUCHYTA1.balrog_%s_truth_%s        
     """%(table,band)
